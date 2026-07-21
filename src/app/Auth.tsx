@@ -3,6 +3,8 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import { z } from "zod";
 
 import { Button } from "../components/ui/button";
+import { useI18n } from "./i18n";
+import { LanguageSelector } from "./LanguageSelector";
 
 const authUserSchema = z.object({
   id: z.string(),
@@ -29,6 +31,7 @@ export function useAuth() {
 }
 
 export function AuthGate({ children }: { children: (user: AuthUser) => ReactNode }) {
+  const { messages } = useI18n();
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -37,13 +40,13 @@ export function AuthGate({ children }: { children: (user: AuthUser) => ReactNode
     fetch("/auth/session")
       .then(async (response) => {
         if (response.status === 401) return null;
-        if (!response.ok) throw new Error("Could not verify your sign-in");
+        if (!response.ok) throw new Error(messages.auth.verifyError);
         return authResponseSchema.parse(await response.json()).user;
       })
       .then(setUser)
       .catch((caught) => setError(caught instanceof Error ? caught.message : String(caught)))
       .finally(() => setLoading(false));
-  }, []);
+  }, [messages.auth.verifyError]);
 
   const value = useMemo<AuthState | null>(
     () =>
@@ -52,19 +55,19 @@ export function AuthGate({ children }: { children: (user: AuthUser) => ReactNode
             user,
             async signOut() {
               const response = await fetch("/auth/logout", { method: "POST" });
-              if (!response.ok) throw new Error("Could not sign out");
+              if (!response.ok) throw new Error(messages.auth.signOutError);
               setUser(null);
             },
           }
         : null,
-    [user],
+    [messages.auth.signOutError, user],
   );
 
   if (loading) {
     return (
       <div className="auth-screen" role="status">
         <LoaderCircle className="spin" aria-hidden="true" />
-        <span>調理データを読み込んでいます</span>
+        <span>{messages.auth.loading}</span>
       </div>
     );
   }
@@ -74,18 +77,19 @@ export function AuthGate({ children }: { children: (user: AuthUser) => ReactNode
     return (
       <main className="login-page">
         <section className="login-panel" aria-labelledby="login-title">
-          <div className="brand-lockup">
-            <span>PEAR Cook</span>
+          <div className="login-toolbar">
+            <div className="brand-lockup">
+              <span>PEAR Cook</span>
+            </div>
+            <LanguageSelector />
           </div>
-          <h1 id="login-title">レシピから調理手順を作成</h1>
-          <p>
-            レシピを追加して内容を確認すると、複数の料理が同時に完成する順番へ整理されます。
-          </p>
+          <h1 id="login-title">{messages.auth.title}</h1>
+          <p>{messages.auth.description}</p>
           <div className="login-actions">
             <Button asChild size="lg">
               <a href="/auth/github?returnTo=/">
                 <GitBranch aria-hidden="true" />
-                GitHubでログイン
+                {messages.auth.github}
               </a>
             </Button>
             {localDevelopment && (
@@ -95,7 +99,7 @@ export function AuthGate({ children }: { children: (user: AuthUser) => ReactNode
                   setError(null);
                   void fetch("/auth/local", { method: "POST" })
                     .then(async (response) => {
-                      if (!response.ok) throw new Error("ローカルログインは無効です");
+                      if (!response.ok) throw new Error(messages.auth.localDisabled);
                       const body = authResponseSchema.parse(await response.json());
                       setUser(body.user);
                     })
@@ -104,17 +108,17 @@ export function AuthGate({ children }: { children: (user: AuthUser) => ReactNode
                     );
                 }}
               >
-                ローカル環境で確認
+                {messages.auth.local}
               </Button>
             )}
           </div>
           {error && (
             <div className="inline-error" role="alert">
-              <strong>ログイン状態を確認できませんでした</strong>
+              <strong>{messages.auth.errorTitle}</strong>
               <span>{error}</span>
             </div>
           )}
-          <p className="login-footnote">献立と調理セッションはログインしたアカウントにのみ保存されます。</p>
+          <p className="login-footnote">{messages.auth.footnote}</p>
         </section>
       </main>
     );

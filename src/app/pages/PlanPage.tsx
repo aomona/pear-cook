@@ -13,11 +13,13 @@ import { Checkbox } from "../../components/ui/checkbox";
 import { Label } from "../../components/ui/label";
 import { cookingNormalizedInputSchema, cookingStepDataSchema } from "../../domain/domain";
 import { useAuth } from "../Auth";
+import { useI18n } from "../i18n";
 import { links } from "../navigation";
 
 export function PlanPage({ planId }: { planId: string }) {
   const { client } = usePearContext();
   const { user } = useAuth();
+  const { messages, format } = useI18n();
   const session = useExecutionSession();
   const artifact = useQuery({ queryKey: ["plan", planId], queryFn: () => client.getPlan(planId) });
   const [reviewed, setReviewed] = useState(false);
@@ -44,23 +46,23 @@ export function PlanPage({ planId }: { planId: string }) {
     }
   }
 
-  if (artifact.isLoading) return <div className="center-state" role="status"><LoaderCircle className="spin" />調理順を読み込んでいます</div>;
+  if (artifact.isLoading) return <div className="center-state" role="status"><LoaderCircle className="spin" />{messages.review.loading}</div>;
   if (artifact.isError) return (
     <div className="page-state" role="alert">
-      <strong>この献立を開けませんでした</strong>
-      <p>アクセス権限または通信状態を確認して、もう一度お試しください。</p>
-      <div><Button variant="secondary" onClick={() => void artifact.refetch()}>もう一度読み込む</Button><Button asChild variant="ghost"><a href={links.plans()}>献立一覧へ</a></Button></div>
+      <strong>{messages.review.loadError}</strong>
+      <p>{messages.review.loadErrorDescription}</p>
+      <div><Button variant="secondary" onClick={() => void artifact.refetch()}>{messages.common.retry}</Button><Button asChild variant="ghost"><a href={links.plans()}>{messages.common.backToPlans}</a></Button></div>
     </div>
   );
-  if (!artifact.data) return <div className="page-state"><strong>献立が見つかりません</strong><p>削除されたか、アクセスできない献立です。</p><Button asChild><a href={links.plans()}>献立一覧へ戻る</a></Button></div>;
+  if (!artifact.data) return <div className="page-state"><strong>{messages.review.notFound}</strong><p>{messages.review.notFoundDescription}</p><Button asChild><a href={links.plans()}>{messages.review.backToPlans}</a></Button></div>;
 
   const normalized = cookingNormalizedInputSchema.safeParse(artifact.data.normalizedInput);
   if (!normalized.success) {
     return (
       <div className="page-state">
-        <strong>調理順がまだ作成されていません</strong>
-        <p>レシピ画面で料理を追加し、「調理順を作成して確認へ」を選んでください。</p>
-        <Button asChild><a href={links.input(planId)}>レシピ画面へ戻る</a></Button>
+        <strong>{messages.review.missingPlan}</strong>
+        <p>{messages.review.missingPlanDescription}</p>
+        <Button asChild><a href={links.input(planId)}>{messages.review.backToRecipe}</a></Button>
       </div>
     );
   }
@@ -75,29 +77,29 @@ export function PlanPage({ planId }: { planId: string }) {
   return (
     <section className="flow-page synchronized-review page-enter">
       <header className="page-heading review-heading">
-        <span className="eyebrow">2 / 3　調理順の確認</span>
+        <span className="eyebrow">{messages.review.eyebrow}</span>
         <h1>{normalized.data.mealTitle}</h1>
-        <p>開始時刻と並行作業を確認してください。承認するまで調理セッションは作成されません。</p>
+        <p>{messages.review.description}</p>
         <div className="plan-summary-line">
-          <span><strong>{normalized.data.recipes.length}</strong>品</span>
-          <span>最初の作業は完成の<strong>{Math.ceil(maxOffset / 60)}</strong>分前</span>
-          <span>全<strong>{scheduledSteps.length}</strong>工程</span>
+          <span><strong>{normalized.data.recipes.length}</strong> {messages.common.dishUnit}</span>
+          <span>{format(messages.review.firstTask, { count: Math.ceil(maxOffset / 60) })}</span>
+          <span>{format(messages.review.totalSteps, { count: scheduledSteps.length })}</span>
         </div>
       </header>
 
       <section className="finish-line" aria-labelledby="finish-line-title">
         <span>T−0</span>
         <div>
-          <h2 id="finish-line-title">すべての料理を同時に食卓へ</h2>
-          <p>T−10なら、完成予定の10分前に始める作業です。</p>
+          <h2 id="finish-line-title">{messages.review.finishTitle}</h2>
+          <p>{messages.review.finishDescription}</p>
         </div>
       </section>
 
       {scheduledSteps.length === 0 ? (
         <div className="empty-state">
-          <strong>確認できる工程がありません</strong>
-          <p>レシピ画面へ戻り、調理順を作り直してください。</p>
-          <Button asChild><a href={links.input(planId)}>レシピ画面へ戻る</a></Button>
+          <strong>{messages.review.noSteps}</strong>
+          <p>{messages.review.noStepsDescription}</p>
+          <Button asChild><a href={links.input(planId)}>{messages.review.backToRecipe}</a></Button>
         </div>
       ) : (
         <div className="recipe-lanes">
@@ -110,25 +112,28 @@ export function PlanPage({ planId }: { planId: string }) {
                 <header>
                   <div>
                     <h2>{recipe.title}</h2>
-                    <p>{recipe.servings}人分 · {laneSteps.length}工程</p>
+                    <p>{format(messages.review.recipeSummary, {
+                      servings: format(messages.common.servings, { count: recipe.servings }),
+                      steps: format(messages.common.steps, { count: laneSteps.length }),
+                    })}</p>
                   </div>
-                  {recipe.transformationHistory.length > 0 && <span className="plain-status">調整済み</span>}
+                  {recipe.transformationHistory.length > 0 && <span className="plain-status">{messages.review.adjusted}</span>}
                 </header>
                 <ol>
                   {laneSteps.map(({ step, timing }) => {
                     const isWait = timing.kind === "wait";
                     return (
                       <li key={step.id} className={`timing-step timing-${timing.kind}`}>
-                        <div className="timing-marker"><strong>T−{Math.ceil(timing.startOffsetSeconds / 60)}</strong><span>分</span></div>
+                        <div className="timing-marker"><strong>T−{Math.ceil(timing.startOffsetSeconds / 60)}</strong><span>{messages.common.minuteUnit}</span></div>
                         <div className="timing-step-body">
                           <div className="timing-step-topline">
-                            <span>{isWait ? "待機" : timing.kind === "serve" ? "仕上げ" : "調理"}</span>
-                            <span><Clock3 />約{Math.ceil(step.estimatedDurationSeconds / 60)}分</span>
+                            <span>{isWait ? messages.review.wait : timing.kind === "serve" ? messages.review.serve : messages.review.cook}</span>
+                            <span><Clock3 />{format(messages.common.minutes, { count: Math.ceil(step.estimatedDurationSeconds / 60) })}</span>
                           </div>
-                          <h3>{isWait ? `${recipe.title}はまだ始めない` : step.label || step.id}</h3>
+                          <h3>{isWait ? format(messages.review.waitTitle, { title: recipe.title }) : step.label || step.id}</h3>
                           <p>
                             {isWait
-                              ? `ほかの料理を先に進め、約${Math.ceil(step.estimatedDurationSeconds / 60)}分後に始めます。`
+                              ? format(messages.review.waitDescription, { count: Math.ceil(step.estimatedDurationSeconds / 60) })
                               : step.instructions}
                           </p>
                           {(timing.temperature || timing.equipment.length > 0) && (
@@ -152,7 +157,7 @@ export function PlanPage({ planId }: { planId: string }) {
         <section className="shared-serve" key={step.id}>
           <span>T−0</span>
           <div>
-            <h2>すべての料理を仕上げる</h2>
+            <h2>{messages.review.finishAll}</h2>
             <p>{step.instructions}</p>
           </div>
         </section>
@@ -160,26 +165,26 @@ export function PlanPage({ planId }: { planId: string }) {
 
       <section className="approval-panel" aria-labelledby="approval-title">
         <div className="approval-copy">
-          <span className="plain-status">承認が必要です</span>
-          <h2 id="approval-title">この調理順で始めますか？</h2>
-          <p>変更が必要な場合はレシピ画面へ戻って調整し、もう一度調理順を作成してください。</p>
+          <span className="plain-status">{messages.review.approvalRequired}</span>
+          <h2 id="approval-title">{messages.review.approvalTitle}</h2>
+          <p>{messages.review.approvalDescription}</p>
         </div>
         <Label className="approval-check">
           <Checkbox checked={reviewed} onCheckedChange={(checked) => setReviewed(checked === true)} />
-          <span>料理、開始時刻、並行作業を確認しました。</span>
+          <span>{messages.review.approvalCheck}</span>
         </Label>
         <div className="approval-actions">
-          <Button asChild variant="secondary"><a href={links.input(planId)}><ArrowLeft />レシピを調整</a></Button>
+          <Button asChild variant="secondary"><a href={links.input(planId)}><ArrowLeft />{messages.review.adjustRecipes}</a></Button>
           <Button size="lg" disabled={!reviewed || starting} onClick={() => void approveAndStart()}>
             {starting ? <LoaderCircle className="spin" /> : <Play />}
-            {starting ? "調理セッションを開始しています" : "承認して調理を開始"}
+            {starting ? messages.review.starting : messages.review.start}
           </Button>
         </div>
       </section>
 
       {error && (
         <div className="inline-error" role="alert">
-          <strong>調理を開始できませんでした</strong>
+          <strong>{messages.review.startError}</strong>
           <span>{error}</span>
         </div>
       )}

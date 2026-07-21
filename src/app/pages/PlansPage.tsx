@@ -10,6 +10,7 @@ import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 import { buildCookingGoal } from "../../domain/plan";
 import { pearConfig } from "../../pear.config";
+import { useI18n } from "../i18n";
 import { links } from "../navigation";
 
 const planListSchema = z.object({
@@ -28,6 +29,7 @@ const planListSchema = z.object({
 
 export function PlansPage() {
   const { client } = usePearContext();
+  const { messages, format, formatDate } = useI18n();
   const [dish, setDish] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -35,7 +37,7 @@ export function PlansPage() {
     queryKey: ["plans", pearConfig.domainId],
     queryFn: async () => {
       const response = await fetch("/api/plans");
-      if (!response.ok) throw new Error("通信状態を確認して、もう一度読み込んでください。");
+      if (!response.ok) throw new Error(messages.plans.networkError);
       return planListSchema.parse(await response.json()).plans;
     },
   });
@@ -63,9 +65,9 @@ export function PlansPage() {
     <section className="dashboard page-enter">
       <header className="page-heading dashboard-heading">
         <div>
-          <span className="eyebrow">献立</span>
-          <h1>何を作りますか？</h1>
-          <p>献立名を決めたら、料理をレシピURL、テキスト、料理名から追加します。</p>
+          <span className="eyebrow">{messages.plans.eyebrow}</span>
+          <h1>{messages.plans.title}</h1>
+          <p>{messages.plans.description}</p>
         </div>
       </header>
 
@@ -77,23 +79,23 @@ export function PlansPage() {
         }}
       >
         <div className="field-grow">
-          <Label htmlFor="dish-name">新しい献立名</Label>
+          <Label htmlFor="dish-name">{messages.plans.nameLabel}</Label>
           <Input
             id="dish-name"
             value={dish}
             onChange={(event) => setDish(event.target.value)}
-            placeholder="例：日曜の夕食"
+            placeholder={messages.plans.namePlaceholder}
             autoFocus
           />
         </div>
         <Button type="submit" size="lg" disabled={creating || !dish.trim()}>
           {creating ? <span className="button-spinner" /> : <Plus aria-hidden="true" />}
-          {creating ? "献立を作成しています" : "この献立を作成"}
+          {creating ? messages.plans.creating : messages.plans.create}
         </Button>
       </form>
       {error && (
         <div className="inline-error" role="alert">
-          <strong>献立を作成できませんでした</strong>
+          <strong>{messages.plans.createError}</strong>
           <span>{error}</span>
         </div>
       )}
@@ -101,8 +103,8 @@ export function PlansPage() {
       <section className="plan-library" aria-labelledby="plan-library-title">
         <div className="section-heading">
           <div>
-            <h2 id="plan-library-title">保存した献立</h2>
-            <p>編集中の献立は続きから、承認済みの献立は調理順の確認から開きます。</p>
+            <h2 id="plan-library-title">{messages.plans.savedTitle}</h2>
+            <p>{messages.plans.savedDescription}</p>
           </div>
         </div>
 
@@ -110,19 +112,19 @@ export function PlansPage() {
           {plans.isLoading && (
             <div className="list-loading" role="status">
               <span className="button-spinner" />
-              <span>献立を読み込んでいます</span>
+              <span>{messages.plans.loading}</span>
             </div>
           )}
           {plans.isError && (
             <div className="section-error" role="alert">
-              <div><strong>献立を読み込めませんでした</strong><span>{plans.error.message}</span></div>
-              <Button variant="secondary" onClick={() => void plans.refetch()}>もう一度読み込む</Button>
+              <div><strong>{messages.plans.loadError}</strong><span>{messages.plans.networkError}</span></div>
+              <Button variant="secondary" onClick={() => void plans.refetch()}>{messages.common.retry}</Button>
             </div>
           )}
           {plans.data?.length === 0 && (
             <div className="empty-state">
-              <strong>保存した献立はありません</strong>
-              <p>上の入力欄に献立名を入れて、最初の献立を作成してください。</p>
+              <strong>{messages.plans.emptyTitle}</strong>
+              <p>{messages.plans.emptyDescription}</p>
             </div>
           )}
           {plans.data && plans.data.length > 0 && (
@@ -132,15 +134,15 @@ export function PlansPage() {
                   <a href={plan.status === "ready" ? links.plan(plan.id) : links.input(plan.id)}>
                     <div className="plan-list-main">
                       <Badge variant={plan.status === "ready" ? "success" : "outline"}>
-                        {plan.status === "ready" ? "承認済み" : plan.status === "archived" ? "保管済み" : "編集中"}
+                        {plan.status === "ready" ? messages.plans.ready : plan.status === "archived" ? messages.plans.archived : messages.plans.draft}
                       </Badge>
-                      <strong>{plan.title || "名称未設定の献立"}</strong>
+                      <strong>{plan.title || messages.plans.untitled}</strong>
                       <span>
-                        {new Date(plan.updatedAt).toLocaleDateString("ja-JP")} 更新 · バージョン {plan.version}
+                        {format(messages.plans.updated, { date: formatDate(plan.updatedAt), version: plan.version })}
                       </span>
                     </div>
                     <span className="plan-list-action">
-                      {plan.status === "ready" ? "調理順を確認" : "レシピを編集"}
+                      {plan.status === "ready" ? messages.plans.review : messages.plans.edit}
                       <ArrowRight aria-hidden="true" />
                     </span>
                   </a>

@@ -17,6 +17,7 @@ import {
 
 import { Button } from "../../components/ui/button";
 import { cookingStepDataSchema } from "../../domain/domain";
+import { useI18n } from "../i18n";
 import { links } from "../navigation";
 
 function collapseTranscript(entries: readonly VoiceTranscriptEntry[]): VoiceTranscriptEntry[] {
@@ -42,20 +43,21 @@ function latestAssistantEntry(entries: readonly VoiceTranscriptEntry[]): VoiceTr
 
 export function ExecutePage({ sessionId }: { sessionId: string }) {
   const actions = useExecutionSession(sessionId);
+  const { locale, messages, format } = useI18n();
   const runtime = useRuntimeSnapshot(sessionId);
   const voice = useVoiceSession(sessionId, {
-    openingText: "現在の調理状況を確認して、次に行う作業を料理名から短く案内してください。",
+    openingText: messages.execute.openingText,
   });
 
   const voiceActive = ["connected", "muted", "recovering"].includes(voice.status);
   const voiceStatusLabel: Record<typeof voice.status, string> = {
-    idle: "未接続",
-    disconnected: "未接続",
-    connecting: "接続中",
-    connected: "会話中",
-    muted: "ミュート中",
-    recovering: "再接続中",
-    error: "接続エラー",
+    idle: messages.execute.disconnected,
+    disconnected: messages.execute.disconnected,
+    connecting: messages.execute.connecting,
+    connected: messages.execute.connected,
+    muted: messages.execute.muted,
+    recovering: messages.execute.recovering,
+    error: messages.execute.connectionError,
   };
   const recentTranscript = collapseTranscript(voice.transcript).slice(-6);
 
@@ -76,9 +78,9 @@ export function ExecutePage({ sessionId }: { sessionId: string }) {
   }
 
   if (runtime.status === "loading" || !runtime.snapshot) {
-    return <div className="center-state"><LoaderCircle className="spin" />全レシピの進行を準備しています…</div>;
+    return <div className="center-state"><LoaderCircle className="spin" />{messages.execute.loading}</div>;
   }
-  if (runtime.error) return <p className="form-error">調理セッションを読み込めませんでした: {runtime.error.message}</p>;
+  if (runtime.error) return <p className="form-error">{format(messages.execute.loadError, { message: runtime.error.message })}</p>;
 
   const { plan, stepStates } = runtime.snapshot;
   const completed = Object.values(stepStates).filter(({ status }) => status === "completed").length;
@@ -114,10 +116,10 @@ export function ExecutePage({ sessionId }: { sessionId: string }) {
     <section className="cook-page live-cook-page page-enter">
       <header className="live-cook-header">
         <div>
-          <span className="eyebrow">3 / 3　調理中</span>
-          <h1>{plan.title || "同時調理プラン"}</h1>
+          <span className="eyebrow">{messages.execute.eyebrow}</span>
+          <h1>{plan.title || messages.execute.fallbackTitle}</h1>
         </div>
-        <div className="cook-progress" aria-label={`${Math.round(progress)} percent complete`}>
+        <div className="cook-progress" aria-label={format(messages.execute.progress, { count: Math.round(progress) })}>
           <span><strong>{completed}</strong> / {plan.steps.length}</span>
           <i><b style={{ width: `${progress}%` }} /></i>
         </div>
@@ -134,20 +136,20 @@ export function ExecutePage({ sessionId }: { sessionId: string }) {
               </div>
               <h2 id="live-guidance-title">
                 {voiceActive
-                  ? latestAssistantMessage?.text || "話しかけてください。いまの状況から次の一手を案内します。"
-                  : "音声ガイドと一緒に調理を始める"}
+                  ? latestAssistantMessage?.text || messages.execute.prompt
+                  : messages.execute.voiceTitle}
               </h2>
               <p>
                 {voiceActive
-                  ? "「次は？」「タイマーをかけて」「終わった」と、そのまま話せます。"
-                  : "最初に一度だけマイクを接続します。以降は画面を触らなくても進められます。"}
+                  ? messages.execute.voiceActiveDescription
+                  : messages.execute.voiceDescription}
               </p>
             </div>
           </div>
           <div className="voice-guide-actions">
             {!voiceActive && voice.status !== "connecting" ? (
               <Button size="lg" className="start-live-button" onClick={() => void connectVoice()}>
-                <Mic />Gemini Liveを開始
+                <Mic />{messages.execute.startVoice}
               </Button>
             ) : (
               <>
@@ -158,7 +160,7 @@ export function ExecutePage({ sessionId }: { sessionId: string }) {
                   onClick={() => voice.status === "muted" ? voice.unmute() : voice.mute()}
                 >
                   {voice.status === "muted" ? <Mic /> : <MicOff />}
-                  {voice.status === "muted" ? "マイクを再開" : "ミュート"}
+                  {voice.status === "muted" ? messages.execute.unmute : messages.execute.mute}
                 </Button>
                 <Button
                   size="lg"
@@ -166,26 +168,26 @@ export function ExecutePage({ sessionId }: { sessionId: string }) {
                   disabled={voice.status === "connecting"}
                   onClick={() => void voice.disconnect()}
                 >
-                  <PhoneOff />音声だけ終了
+                  <PhoneOff />{messages.execute.stopVoice}
                 </Button>
               </>
             )}
           </div>
           {voice.status === "connecting" && (
-            <div className="voice-connecting"><LoaderCircle className="spin" />現在の調理状況をGeminiに渡しています…</div>
+            <div className="voice-connecting"><LoaderCircle className="spin" />{messages.execute.voiceConnecting}</div>
           )}
           {voice.error && (
             <p className="form-error voice-error" role="alert">
-              音声ガイドを開始できませんでした: {voice.error.message}
+              {format(messages.execute.voiceError, { message: voice.error.message })}
             </p>
           )}
           {recentTranscript.length > 0 && (
             <details className="voice-history">
-              <summary>会話履歴を見る</summary>
-              <div className="voice-transcript" role="log" aria-live="polite" aria-label="音声会話">
+              <summary>{messages.execute.showTranscript}</summary>
+              <div className="voice-transcript" role="log" aria-live="polite" aria-label={messages.execute.transcriptLabel}>
                 {recentTranscript.map((entry, index) => (
                   <p key={`${entry.role}-${index}`} className={`voice-line voice-line-${entry.role}`}>
-                    <strong>{entry.role === "user" ? "あなた" : entry.role === "assistant" ? "Gemini" : "操作"}</strong>
+                    <strong>{entry.role === "user" ? messages.execute.user : entry.role === "assistant" ? messages.execute.assistant : messages.execute.tool}</strong>
                     <span>{entry.text}</span>
                   </p>
                 ))}
@@ -197,10 +199,10 @@ export function ExecutePage({ sessionId }: { sessionId: string }) {
 
       <section className="now-section" aria-labelledby="now-heading">
         <div className="action-section-heading">
-          <span className="action-number">現在</span>
+          <span className="action-number">{messages.execute.current}</span>
           <div>
-            <h2 id="now-heading">いまやること</h2>
-            <p>{nowSteps.length > 1 ? `${nowSteps.length}つの作業が進行中です` : "この作業だけ見れば大丈夫です"}</p>
+            <h2 id="now-heading">{messages.execute.nowTitle}</h2>
+            <p>{nowSteps.length > 1 ? format(messages.execute.nowMultiple, { count: nowSteps.length }) : messages.execute.nowSingle}</p>
           </div>
         </div>
 
@@ -210,20 +212,20 @@ export function ExecutePage({ sessionId }: { sessionId: string }) {
               <article className={`now-task-card station-${status}`} key={step.id}>
                 <header>
                   <div className="station-topline">
-                    <span className="recipe-name">{timing?.recipeTitle || "仕上げ"}</span>
-                    <span>{status === "active" ? "進行中" : "開始できます"}</span>
+                    <span className="recipe-name">{timing?.recipeTitle || messages.common.finish}</span>
+                    <span>{status === "active" ? messages.execute.active : messages.execute.ready}</span>
                   </div>
                   <span className="now-task-index">{String(index + 1).padStart(2, "0")}</span>
-                  <h3>{timing?.kind === "wait" ? `${timing.recipeTitle}はまだ始めない` : step.label || step.id}</h3>
+                  <h3>{timing?.kind === "wait" ? format(messages.execute.waitTitle, { title: timing.recipeTitle }) : step.label || step.id}</h3>
                 </header>
                 <div className="now-task-content">
                   <p className="now-instruction">
                     {timing?.kind === "wait"
-                      ? `あと約${Math.ceil(step.estimatedDurationSeconds / 60)}分待ってから始めます。いまはほかの料理を進めてください。`
+                      ? format(messages.execute.waitInstruction, { count: Math.ceil(step.estimatedDurationSeconds / 60) })
                       : step.instructions}
                   </p>
                   <div className="station-meta">
-                    <span><Clock3 />約{Math.ceil(step.estimatedDurationSeconds / 60)}分</span>
+                    <span><Clock3 />{format(messages.common.minutes, { count: Math.ceil(step.estimatedDurationSeconds / 60) })}</span>
                     {timing?.temperature && <span>{timing.temperature}</span>}
                     {timing?.equipment.map((equipment) => <span key={equipment}>{equipment}</span>)}
                   </div>
@@ -235,7 +237,7 @@ export function ExecutePage({ sessionId }: { sessionId: string }) {
                     onClick={() => void updateStep(step.id, status)}
                   >
                     {actions.status === "loading" ? <LoaderCircle className="spin" /> : status === "active" ? <Check /> : <Play />}
-                    {status === "active" ? timing?.kind === "wait" ? "待ち時間が終わった" : "できた" : "この作業を始める"}
+                    {status === "active" ? timing?.kind === "wait" ? messages.execute.waitDone : messages.execute.done : messages.execute.startTask}
                   </Button>
                 </div>
               </article>
@@ -243,28 +245,28 @@ export function ExecutePage({ sessionId }: { sessionId: string }) {
           </div>
         ) : (
           <div className="empty-state meal-complete-state">
-            <h2>すべての料理が完成しました</h2>
-            <p>火の通りと味を確認し、温かいうちに食卓へ運びましょう。</p>
+            <h2>{messages.execute.completeTitle}</h2>
+            <p>{messages.execute.completeDescription}</p>
           </div>
         )}
-        {actions.error && <div className="inline-error" role="alert"><strong>進行状況を更新できませんでした</strong><span>{actions.error.message}</span><Button variant="secondary" onClick={() => void runtime.refetch()}>現在の状態を再読み込み</Button></div>}
+        {actions.error && <div className="inline-error" role="alert"><strong>{messages.execute.updateError}</strong><span>{actions.error.message}</span><Button variant="secondary" onClick={() => void runtime.refetch()}>{messages.execute.reloadState}</Button></div>}
       </section>
 
       {(nextSteps.length > 0 || parallelSteps.length > 0 || waitingSteps.some(({ step }) => !nowSteps.some(({ step: current }) => current.id === step.id))) && (
         <section className="coming-up-section" aria-labelledby="next-heading">
           <div className="action-section-heading compact">
-            <span className="action-number">次</span>
+            <span className="action-number">{messages.execute.next}</span>
             <div>
-              <h2 id="next-heading">この次</h2>
-              <p>いまは読むだけ。まだ始めなくて大丈夫です。</p>
+              <h2 id="next-heading">{messages.execute.nextTitle}</h2>
+              <p>{messages.execute.nextDescription}</p>
             </div>
           </div>
           <div className="coming-up-list">
             {nextSteps.map(({ step, timing }) => (
               <div className="coming-up-card" key={step.id}>
-                <span>{timing?.recipeTitle || "仕上げ"}</span>
+                <span>{timing?.recipeTitle || messages.common.finish}</span>
                 <strong>{step.label || step.id}</strong>
-                <small><Clock3 />約{Math.ceil(step.estimatedDurationSeconds / 60)}分</small>
+                <small><Clock3 />{format(messages.common.minutes, { count: Math.ceil(step.estimatedDurationSeconds / 60) })}</small>
               </div>
             ))}
             {waitingSteps
@@ -273,8 +275,8 @@ export function ExecutePage({ sessionId }: { sessionId: string }) {
                 <div className="waiting-option" key={step.id}>
                   <Clock3 />
                   <div>
-                    <span>いまは待つ</span>
-                    <strong>{timing?.recipeTitle}は約{Math.ceil(step.estimatedDurationSeconds / 60)}分後から</strong>
+                    <span>{messages.execute.waitNow}</span>
+                    <strong>{format(messages.execute.startsAfter, { title: timing?.recipeTitle || messages.common.finish, count: Math.ceil(step.estimatedDurationSeconds / 60) })}</strong>
                   </div>
                 </div>
               ))}
@@ -282,8 +284,8 @@ export function ExecutePage({ sessionId }: { sessionId: string }) {
               <div className="parallel-option">
                 <GitMerge />
                 <div>
-                  <span>余裕があれば同時に</span>
-                  <strong>{parallelSteps.map(({ step }) => step.label || step.id).join("・")}</strong>
+                  <span>{messages.execute.parallel}</span>
+                  <strong>{parallelSteps.map(({ step }) => step.label || step.id).join(locale === "ja" ? "・" : ", ")}</strong>
                 </div>
               </div>
             )}
@@ -293,11 +295,11 @@ export function ExecutePage({ sessionId }: { sessionId: string }) {
 
       <details className="plan-drawer">
         <summary>
-          <span><strong>全体の流れ</strong><small>{completed} / {plan.steps.length} 完了</small></span>
+          <span><strong>{messages.execute.overview}</strong><small>{format(messages.execute.completed, { done: completed, total: plan.steps.length })}</small></span>
           <button
             type="button"
             className="drawer-refresh"
-            aria-label="最新の進行状況を取得"
+            aria-label={messages.execute.refresh}
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
@@ -314,10 +316,10 @@ export function ExecutePage({ sessionId }: { sessionId: string }) {
                 {status === "completed" ? <Check /> : status === "active" ? <Play /> : <Circle />}
               </span>
               <div>
-                <small>{timing?.recipeTitle || "仕上げ"}</small>
+                <small>{timing?.recipeTitle || messages.common.finish}</small>
                 <strong>{index + 1}. {step.label || step.id}</strong>
                 <span>
-                  {status === "completed" ? "完了" : status === "active" ? "進行中" : status === "ready" ? "開始可能" : "このあと"}
+                  {status === "completed" ? messages.execute.statusCompleted : status === "active" ? messages.execute.statusActive : status === "ready" ? messages.execute.statusReady : messages.execute.statusLater}
                 </span>
               </div>
             </li>
@@ -325,7 +327,7 @@ export function ExecutePage({ sessionId }: { sessionId: string }) {
         </ol>
       </details>
 
-      <Button asChild variant="ghost" className="back-to-plans"><a href={links.plans()}><ArrowLeft />献立一覧へ</a></Button>
+      <Button asChild variant="ghost" className="back-to-plans"><a href={links.plans()}><ArrowLeft />{messages.common.backToPlans}</a></Button>
     </section>
   );
 }
