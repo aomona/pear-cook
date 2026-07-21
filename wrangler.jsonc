@@ -34,7 +34,7 @@
     {
       "binding": "DB",
       "database_name": "pear-cook",
-      "database_id": "local-pear-cook",
+      "database_id": "be5fc163-77ae-4f7b-b763-776563cc3661",
       "migrations_dir": "migrations",
     },
   ],
