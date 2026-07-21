@@ -1,0 +1,47 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "pear-cook",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-07-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/health", "/auth/*", "/api/*", "/plans", "/plans/*", "/sessions", "/sessions/*", "/agents/*"],
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ExecutionSessionAgent",
+        "class_name": "ExecutionSessionAgent",
+      },
+    ],
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["ExecutionSessionAgent"],
+    },
+  ],
+  "workflows": [
+    {
+      "name": "pear-plan-compile",
+      "binding": "PLAN_COMPILE_WORKFLOW",
+      "class_name": "PlanCompileWorkflow",
+    },
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "pear-cook",
+      "database_id": "local-pear-cook",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "r2_buckets": [
+    {
+      "binding": "RAW_INPUTS",
+      "bucket_name": "pear-cook-inputs",
+    },
+  ],
+}

@@ -1,0 +1,13 @@
+# GitHub OAuth App credentials. Callback URL: http://localhost:5173/auth/github/callback
+GITHUB_CLIENT_ID=
+GITHUB_CLIENT_SECRET=
+GITHUB_CALLBACK_URL=http://localhost:5173/auth/github/callback
+
+# At least 32 random characters. Set with `wrangler secret put SESSION_SECRET` in production.
+SESSION_SECRET=replace-with-at-least-32-random-characters
+
+# Localhost-only verification affordance. Never set this in a deployed Worker.
+PEAR_LOCAL_DEV_AUTH=true
+
+# Worker-only AI provider key. Never expose it through a VITE_* variable.
+GEMINI_API_KEY=

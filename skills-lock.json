@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "pear-agent": {
+      "source": "aomona/pear-agent",
+      "sourceType": "github",
+      "skillPath": "skills/pear-agent/SKILL.md",
+      "computedHash": "b550a94885d12a9843394ee8fe2fb29063ce6285e39c4ed26edd083808161015"
+    }
+  }
+}
