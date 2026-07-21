@@ -24,7 +24,8 @@ export function PlanPage({ planId }: { planId: string }) {
   const artifact = useQuery({ queryKey: ["plan", planId], queryFn: () => client.getPlan(planId) });
   const [reviewed, setReviewed] = useState(false);
   const [starting, setStarting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [error, setError] = useState<{ action: "start" | "edit"; detail: string } | null>(null);
 
   async function approveAndStart() {
     if (!artifact.data || !reviewed) return;
@@ -40,9 +41,27 @@ export function PlanPage({ planId }: { planId: string }) {
       await session.startSession();
       window.location.hash = links.execute(created.sessionId).slice(1);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
+      setError({ action: "start", detail: caught instanceof Error ? caught.message : String(caught) });
     } finally {
       setStarting(false);
+    }
+  }
+
+  async function reopenForEditing() {
+    if (!artifact.data || editing) return;
+    if (artifact.data.status !== "ready") {
+      window.location.hash = links.input(planId).slice(1);
+      return;
+    }
+    setEditing(true);
+    setError(null);
+    try {
+      await client.updatePlan(planId, { status: "draft" });
+      window.location.hash = links.input(planId).slice(1);
+    } catch (caught) {
+      setError({ action: "edit", detail: caught instanceof Error ? caught.message : String(caught) });
+    } finally {
+      setEditing(false);
     }
   }
 
@@ -174,8 +193,11 @@ export function PlanPage({ planId }: { planId: string }) {
           <span>{messages.review.approvalCheck}</span>
         </Label>
         <div className="approval-actions">
-          <Button asChild variant="secondary"><a href={links.input(planId)}><ArrowLeft />{messages.review.adjustRecipes}</a></Button>
-          <Button size="lg" disabled={!reviewed || starting} onClick={() => void approveAndStart()}>
+          <Button variant="secondary" disabled={editing || starting} onClick={() => void reopenForEditing()}>
+            {editing ? <LoaderCircle className="spin" /> : <ArrowLeft />}
+            {editing ? messages.review.reopening : messages.review.adjustRecipes}
+          </Button>
+          <Button size="lg" disabled={!reviewed || starting || editing} onClick={() => void approveAndStart()}>
             {starting ? <LoaderCircle className="spin" /> : <Play />}
             {starting ? messages.review.starting : messages.review.start}
           </Button>
@@ -184,8 +206,8 @@ export function PlanPage({ planId }: { planId: string }) {
 
       {error && (
         <div className="inline-error" role="alert">
-          <strong>{messages.review.startError}</strong>
-          <span>{error}</span>
+          <strong>{error.action === "edit" ? messages.review.editError : messages.review.startError}</strong>
+          <span>{error.detail}</span>
         </div>
       )}
     </section>

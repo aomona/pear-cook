@@ -159,9 +159,11 @@ const ja = {
     approvalDescription: "変更が必要な場合はレシピ画面へ戻って調整し、もう一度調理順を作成してください。",
     approvalCheck: "料理、開始時刻、並行作業を確認しました。",
     adjustRecipes: "レシピを調整",
+    reopening: "レシピを編集できる状態に戻しています",
     starting: "調理セッションを開始しています",
     start: "承認して調理を開始",
     startError: "調理を開始できませんでした",
+    editError: "レシピ編集に戻れませんでした",
   },
   execute: {
     openingText: "現在の調理状況を確認して、次に行う作業を料理名から短く案内してください。",
@@ -371,9 +373,11 @@ const en: Messages = {
     approvalDescription: "To make changes, return to recipes, adjust them, and rebuild the cooking order.",
     approvalCheck: "I reviewed the dishes, start times, and parallel work.",
     adjustRecipes: "Adjust recipes",
+    reopening: "Reopening recipes for editing",
     starting: "Starting cooking session",
     start: "Approve and start cooking",
     startError: "We could not start cooking",
+    editError: "We could not return to recipe editing",
   },
   execute: {
     openingText: "Review the current cooking state and briefly tell me the next task, naming the dish first.",

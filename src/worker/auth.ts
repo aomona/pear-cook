@@ -1,6 +1,8 @@
 import { PearContextError, type PearRequestContext } from "@pear-agent/cloudflare";
 import { z } from "zod";
 
+import { sanitizeReturnTo } from "./redirect.js";
+
 export type AuthEnv = {
   GITHUB_CLIENT_ID?: string;
   GITHUB_CLIENT_SECRET?: string;
@@ -124,6 +126,7 @@ export async function resolveAuthenticatedContext(
   };
 }
 
+
 export async function handleAuthRequest(request: Request, env: AuthEnv): Promise<Response> {
   const url = new URL(request.url);
 
@@ -168,9 +171,7 @@ export async function handleAuthRequest(request: Request, env: AuthEnv): Promise
     const state = base64Url(crypto.getRandomValues(new Uint8Array(24)));
     const verifier = base64Url(crypto.getRandomValues(new Uint8Array(32)));
     const digest = await crypto.subtle.digest("SHA-256", encoder.encode(verifier));
-    const returnTo = url.searchParams.get("returnTo")?.startsWith("/")
-      ? url.searchParams.get("returnTo")!
-      : "/";
+    const returnTo = sanitizeReturnTo(url.searchParams.get("returnTo"));
     const oauthState: OAuthState = {
       state,
       verifier,
