@@ -1,0 +1,23 @@
+Cooking one dish is simple. Cooking an entire meal so every dish finishes together is much harder. PEAR Cook turns recipes, ingredients, and kitchen constraints into one coordinated cooking session, while keeping the cook in control.
+
+Users sign in with GitHub, then create a meal plan. A dish can begin as a natural-language request, a public recipe URL, or pasted recipe text. The cook can also provide available ingredients, dietary constraints, notes from a photo, a target serving time, and equipment limits.
+
+Here, I am asking for lemon herb roasted salmon with asparagus. This request is sent to Gemini through the Cloudflare Worker. The AI produces a structured recipe with servings, ingredients, quantities, durations, equipment, safety information, and step-by-step instructions. This is a real production generation, not prerecorded sample data.
+
+Generated content never becomes trusted state automatically. The cook reviews the ingredients and instructions, expands the full recipe, and can request an edit in natural language. For example, the recipe can be made dairy-free or resized for a different number of people. Every transformation remains visible before planning continues.
+
+PEAR Cook becomes especially useful when several dishes must finish at the same time. PEAR Agent compiles the recipes into a dependency-aware timeline. Active cooking, passive waiting, equipment requirements, and shared serving steps are represented separately. A shorter salad waits while the pasta progresses, then both paths join at one finish line.
+
+The generated plan is still only a proposal. The cook reviews start times, parallel work, temperatures, and equipment. An Execution Session is created only after the cook checks the confirmation box and explicitly approves the plan.
+
+During cooking, the interface focuses on what matters now. It separates the current task, upcoming work, waiting periods, and the complete order. Progress is stored as typed runtime events, and the HTTP snapshot remains authoritative across reloads. Gemini Live can provide hands-free guidance and invoke authorized cooking tools, but disconnecting voice never stops the durable session.
+
+The interface supports both English and Japanese and adapts from desktop planning to a focused mobile cooking view.
+
+PEAR Cook runs on React, TypeScript, shadcn UI, Hono, Cloudflare Workers, D one, R two, Workflows, Durable Objects, PEAR Agent, Gemini, and Gemini Live. Authentication is fail-closed, secrets stay on the Worker, and plans and sessions are scoped to the signed-in GitHub user.
+
+Codex was used for the complete project: product architecture, domain modeling, frontend implementation, authentication, Cloudflare integration, testing, browser quality assurance, security review, deployment, and documentation. Codex also operated the production app, recorded this walkthrough, generated the narration workflow, assembled the image gallery, and encoded the final video.
+
+There is one more layer. PEAR Agent, the durable execution framework underneath PEAR Cook, was itself built with Codex and GPT five point six. This project is software built with Codex, running on an agent framework also built with Codex.
+
+PEAR Cook turns a collection of recipes into a calm, reviewable, and durable cooking experience. Plan. Approve. Cook.
