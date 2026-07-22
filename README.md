@@ -25,7 +25,7 @@ AI output remains a proposal. The cook reviews the extracted recipe and compiled
 - Accepts dish requests, public recipe URLs, and pasted recipe text.
 - Captures available ingredients, dietary constraints, equipment limits, finish-time requirements, and notes derived from photos.
 - Uses Gemini to extract structured recipes with ingredients, quantities, instructions, duration, temperature, equipment, safety notes, and source provenance.
-- Stores imported photos in R2, validates detected media types, and shows photo-derived notes beside recipe provenance.
+- Generates optional finished-dish previews with Cloudflare Workers AI using FLUX.2 [klein] 4B, stores the generated image in R2, and labels it as an AI preview that may differ from the actual result.
 - Keeps every extracted recipe reviewable and editable.
 - Supports natural-language recipe adjustments such as changing servings or removing an ingredient.
 - Compiles multiple recipes into one dependency-aware cooking timeline.
@@ -106,7 +106,7 @@ flowchart TD
 | Area | Technology |
 | --- | --- |
 | Agent runtime | PEAR Agent Core, AI, Cloudflare, and React packages |
-| AI | Gemini structured generation, Gemini Live, Google AI SDK, AI SDK |
+| AI | Gemini structured generation and Live, Cloudflare Workers AI with FLUX.2 [klein] 4B, AI SDK |
 | Frontend | React 19, TypeScript, Vite, shadcn/ui patterns, Radix UI, Lucide |
 | Data fetching | TanStack Query and PEAR React hooks |
 | API | Cloudflare Workers and Hono |
@@ -242,7 +242,7 @@ After deployment, verify `/health`, confirm that `/auth/session` returns `401` w
 The guided-cooking slice is complete:
 
 - fail-closed GitHub login and an unauthenticated read-only sample;
-- URL, text, and photo recipe sources with editable structured extraction;
+- AI dish requests, URL, and text recipe sources with editable structured extraction, plus optional AI-generated dish previews;
 - provenance, confidence, localized units, and allergen review;
 - capacity-aware, synchronized multi-recipe planning;
 - explicit human approval before durable execution;

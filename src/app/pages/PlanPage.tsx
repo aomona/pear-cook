@@ -162,9 +162,9 @@ export function PlanPage({ planId }: { planId: string }) {
                   </div>
                   {recipe.transformationHistory.length > 0 && <span className="plain-status">{messages.review.adjusted}</span>}
                 </header>
-                {(recipe.provenance || recipe.photoObservations.length > 0) && <div className="recipe-evidence">
+                {(recipe.provenance || recipe.images.length > 0) && <div className="recipe-evidence">
                   {recipe.provenance && <span className="plain-status">{messages.review.provenanceLabel}: {recipe.provenance.extractedBy} · {format(messages.review.confidenceLabel, { percent: Math.round(recipe.provenance.confidence * 100) })}</span>}
-                  {recipe.photoObservations.map((photo) => <figure key={photo.sourceId}><img src={`/api/plans/${encodeURIComponent(planId)}/photos/${encodeURIComponent(photo.sourceId)}`} alt={format(messages.review.photoPreviewAlt, { title: recipe.title })} /><figcaption>{photo.description || messages.review.photoRefs}</figcaption></figure>)}
+                  {recipe.images.map((image) => <figure key={image.sourceId}><img src={`/api/plans/${encodeURIComponent(planId)}/photos/${encodeURIComponent(image.sourceId)}`} alt={format(messages.input.generatedImageAlt, { title: recipe.title })} /><figcaption><strong>{messages.input.generatedImageLabel}</strong> · {messages.input.generatedImageDisclosure}</figcaption></figure>)}
                 </div>}
                 <ul className="review-ingredients">{recipe.ingredients.map((ingredient, index) => <li key={`${ingredient.name}-${index}`}><span>{ingredient.name}</span><strong>{ingredient.amount != null ? `${ingredient.amount} ${localizeUnit(ingredient.unit || ingredient.canonicalUnit, locale)}` : ingredient.quantity}</strong>{ingredient.allergens.length > 0 && <span className="allergen-chip">{ingredient.allergens.map((allergen) => localizeAllergen(allergen, locale)).join(", ")}</span>}</li>)}</ul>
                 <ol>

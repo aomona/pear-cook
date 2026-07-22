@@ -167,6 +167,16 @@ p { color: var(--muted); font-size: .875rem; line-height: 1.65; }
 .recipe-item-title p { margin: 0; font-size: .75rem; }
 .recipe-detail-toggle { width: 100%; min-height: 42px; padding: 0 18px; display: flex; align-items: center; justify-content: space-between; color: var(--ink); background: transparent; border: 0; border-top: 1px solid var(--line); cursor: pointer; font-size: .8125rem; font-weight: 650; }
 .recipe-detail-grid { padding: 20px 18px; display: grid; grid-template-columns: minmax(180px, .75fr) minmax(0, 1.25fr); gap: 24px; border-top: 1px solid var(--line); }
+.recipe-image-panel { grid-column: 1 / -1; display: grid; gap: 12px; justify-items: start; padding-bottom: 20px; border-bottom: 1px solid var(--line); }
+.recipe-image-panel figure { width: min(100%, 32rem); margin: 0; display: grid; gap: 8px; }
+.recipe-image-panel img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: var(--radius-container); background: var(--paper-soft); }
+.recipe-image-panel figcaption { display: flex; flex-wrap: wrap; gap: 4px 8px; color: var(--muted); font-size: .75rem; }
+.recipe-image-panel figcaption strong { color: var(--ink); }
+.recipe-image-placeholder { width: min(100%, 32rem); min-height: 132px; padding: 20px; display: flex; align-items: center; gap: 14px; color: var(--muted); background: var(--paper-soft); border: 1px dashed var(--line-strong); border-radius: var(--radius-container); }
+.recipe-image-placeholder > svg { width: 28px; height: 28px; color: var(--accent); flex: 0 0 auto; }
+.recipe-image-placeholder div { display: grid; gap: 4px; }
+.recipe-image-placeholder strong { color: var(--ink); font-size: .875rem; }
+.recipe-image-placeholder span { font-size: .8125rem; line-height: 1.5; }
 .recipe-detail-grid h4 { margin-bottom: 12px; font-size: .75rem; }
 .recipe-detail-grid ul, .recipe-detail-grid ol { margin: 0; padding: 0; display: grid; list-style: none; }
 .recipe-detail-grid li { padding: 8px 0; border-top: 1px solid var(--line); font-size: .8125rem; }
@@ -406,9 +416,6 @@ p { color: var(--muted); font-size: .875rem; line-height: 1.65; }
 .sample-steps li.sample-step-complete > strong { color: var(--accent); }
 .sample-complete { padding-top: 16px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; border-top: 1px solid var(--line); }
 .sample-complete > strong { display: inline-flex; align-items: center; gap: 8px; color: var(--accent); }
-.photo-upload-list { display: grid; gap: .5rem; list-style: none; padding: 0; margin: .75rem 0 0; }
-.photo-upload-list li { display: flex; align-items: center; gap: .5rem; }
-.photo-upload-list img { width: 3.5rem; height: 3.5rem; object-fit: cover; border-radius: .5rem; }
 .field-help { color: var(--muted); font-size: .875rem; }
 .capacity-controls { display: grid; gap: .4rem; border: 1px solid var(--line); border-radius: .75rem; padding: .75rem; }
 .recipe-evidence { display: flex; flex-wrap: wrap; gap: .75rem; align-items: start; margin: .75rem 0; }

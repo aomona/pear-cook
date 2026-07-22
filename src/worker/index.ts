@@ -35,7 +35,7 @@ import { createCookingReplanRuntime } from "./replan.js";
 
 export { ExecutionSessionAgent };
 
-type CookingEnv = PearEnv & AuthEnv;
+type CookingEnv = PearEnv & AuthEnv & { AI: Ai };
 const COOKING_MODEL = "gemini-3.5-flash-lite";
 const COOKING_LIVE_MODEL = "gemini-3.1-flash-live-preview";
 
