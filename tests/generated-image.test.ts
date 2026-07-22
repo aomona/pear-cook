@@ -48,12 +48,13 @@ describe("generated recipe image route", () => {
       ],
     });
 
-    const batched: unknown[][] = [];
+    const batched: Array<Array<{ sql: string; args: unknown[] }>> = [];
     const puts: Array<{ key: string; value: ArrayBuffer; options: unknown }> = [];
     const db = {
       prepare(sql: string) {
         const statement = {
           args: [] as unknown[],
+          sql,
           bind(...args: unknown[]) {
             statement.args = args;
             return statement;
@@ -79,7 +80,7 @@ describe("generated recipe image route", () => {
         };
         return statement;
       },
-      async batch(statements: unknown[]) {
+      async batch(statements: Array<{ sql: string; args: unknown[] }>) {
         batched.push(statements);
         return [];
       },
@@ -130,5 +131,13 @@ describe("generated recipe image route", () => {
     );
     expect(batched).toHaveLength(1);
     expect(batched[0]).toHaveLength(2);
+    const persistedRecipeUpdate = batched[0]?.find((statement) =>
+      statement.sql.includes("UPDATE recipe_drafts"),
+    );
+    expect(persistedRecipeUpdate).toBeDefined();
+    const persistedRecipe = normalizedRecipeSchema.parse(
+      JSON.parse(String(persistedRecipeUpdate?.args[0])),
+    );
+    expect(persistedRecipe.images).toEqual(body.recipe.images);
   });
 });

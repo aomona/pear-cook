@@ -71,6 +71,17 @@ function jsonError(message: string, status: number): Response {
   return Response.json({ error: message }, { status });
 }
 
+async function deleteRawInputBestEffort(env: RecipeEnv, objectKey: string): Promise<void> {
+  try {
+    await env.RAW_INPUTS.delete(objectKey);
+  } catch (error) {
+    console.warn(
+      "Failed to delete generated recipe image from R2",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+}
+
 async function ownedPlanExists(env: RecipeEnv, planId: string, actorId: string): Promise<boolean> {
   const row = await env.DB.prepare(
     "SELECT id FROM plan_artifacts WHERE id = ? AND owner_actor_id = ? AND status = 'draft'",
@@ -398,12 +409,12 @@ async function generateRecipeImage(
     }
     await env.DB.batch(statements);
   } catch {
-    await env.RAW_INPUTS.delete(objectKey);
+    await deleteRawInputBestEffort(env, objectKey);
     return jsonError("Failed to save the generated image", 500);
   }
 
   if (previousSource?.raw_object_key) {
-    await env.RAW_INPUTS.delete(previousSource.raw_object_key);
+    await deleteRawInputBestEffort(env, previousSource.raw_object_key);
   }
   return Response.json({ recipe }, { status: 201 });
 }
@@ -486,7 +497,7 @@ export async function handleRecipeApi(
       );
     }
     await env.DB.batch(statements);
-    if (source?.raw_object_key) await env.RAW_INPUTS.delete(source.raw_object_key);
+    if (source?.raw_object_key) await deleteRawInputBestEffort(env, source.raw_object_key);
     return new Response(null, { status: 204 });
   }
 

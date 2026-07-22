@@ -242,7 +242,7 @@ After deployment, verify `/health`, confirm that `/auth/session` returns `401` w
 The guided-cooking slice is complete:
 
 - fail-closed GitHub login and an unauthenticated read-only sample;
-- URL and text recipe sources with editable structured extraction, plus optional AI-generated dish previews;
+- AI dish requests, URL, and text recipe sources with editable structured extraction, plus optional AI-generated dish previews;
 - provenance, confidence, localized units, and allergen review;
 - capacity-aware, synchronized multi-recipe planning;
 - explicit human approval before durable execution;
