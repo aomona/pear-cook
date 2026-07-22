@@ -5,8 +5,9 @@ import {
   MAX_PHOTO_BYTES,
   mediaTypeFromMagic,
   sha256Hex,
-  validatePhotoBytes,
 } from "../src/worker/photos";
+import { normalizedRecipeSchema } from "../src/domain/domain";
+import { buildRecipeImagePrompt, decodeGeneratedImage } from "../src/worker/recipes";
 
 function makeJpeg(): Uint8Array {
   const body = new Uint8Array(64);
@@ -35,6 +36,10 @@ function makeWebP(): Uint8Array {
 function makeHtmlWithJpegExtension(): Uint8Array {
   const enc = new TextEncoder();
   return enc.encode("<html><body>Not an image</body></html>");
+}
+
+function encodeBase64(bytes: Uint8Array): string {
+  return btoa(String.fromCharCode(...bytes));
 }
 
 describe("photo magic bytes detection", () => {
@@ -66,38 +71,54 @@ describe("photo magic bytes detection", () => {
   });
 });
 
-describe("photo content type validation", () => {
-  it("accepts matching declared and detected type", () => {
-    const jpeg = makeJpeg();
-    const result = validatePhotoBytes(jpeg, "image/jpeg");
-    expect(result).toBe("image/jpeg");
+describe("generated image validation", () => {
+  it("decodes matching image data", () => {
+    const result = decodeGeneratedImage(encodeBase64(makeJpeg()), "image/jpeg");
+    expect(result.mediaType).toBe("image/jpeg");
+    expect(result.bytes).toEqual(makeJpeg());
   });
 
-  it("accepts detected type when no declared type is given", () => {
-    const png = makePng();
-    const result = validatePhotoBytes(png, null);
-    expect(result).toBe("image/png");
+  it("detects a media type when Gemini omits it", () => {
+    expect(decodeGeneratedImage(encodeBase64(makePng()), undefined).mediaType).toBe("image/png");
   });
 
-  it("rejects spoofed declared type", () => {
-    const jpeg = makeJpeg();
-    const result = validatePhotoBytes(jpeg, "image/png");
-    expect(result).toBeInstanceOf(Response);
+  it("rejects a mismatched declared type", () => {
+    expect(() => decodeGeneratedImage(encodeBase64(makeJpeg()), "image/png")).toThrow(
+      "image/jpeg bytes as image/png",
+    );
   });
 
-  it("rejects disallowed declared type even if magic matches", () => {
-    const body = new Uint8Array(64);
-    body[0] = 0x47;
-    body[1] = 0x49;
-    body[2] = 0x46;
-    const result = validatePhotoBytes(body, "image/gif");
-    expect(result).toBeInstanceOf(Response);
+  it("rejects non-image model output", () => {
+    expect(() =>
+      decodeGeneratedImage(encodeBase64(makeHtmlWithJpegExtension()), "image/jpeg"),
+    ).toThrow("unsupported image format");
   });
+});
 
-  it("rejects HTML masquerading as JPEG", () => {
-    const html = makeHtmlWithJpegExtension();
-    const result = validatePhotoBytes(html, "image/jpeg");
-    expect(result).toBeInstanceOf(Response);
+describe("generated image prompt", () => {
+  it("grounds the image in the reviewed recipe and forbids unlisted additions", () => {
+    const recipe = normalizedRecipeSchema.parse({
+      id: "recipe-1",
+      title: "Tomato pasta",
+      servings: 2,
+      ingredients: [
+        { name: "tomato", quantity: "2" },
+        { name: "spaghetti", quantity: "160 g" },
+      ],
+      instructions: [
+        {
+          title: "Serve",
+          instruction: "Twirl the pasta onto two plates.",
+          durationSeconds: 60,
+        },
+      ],
+      sourceRefs: [{ sourceId: "source-1" }],
+    });
+    const prompt = buildRecipeImagePrompt(recipe);
+    expect(prompt).toContain("Dish: Tomato pasta");
+    expect(prompt).toContain("tomato (2), spaghetti (160 g)");
+    expect(prompt).toContain("Twirl the pasta onto two plates.");
+    expect(prompt).toContain("ingredients not listed");
   });
 });
 

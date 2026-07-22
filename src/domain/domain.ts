@@ -5,7 +5,7 @@ import {
 } from "@pear-agent/core";
 import { z } from "zod";
 
-export const COOKING_DOMAIN_VERSION = 2;
+export const COOKING_DOMAIN_VERSION = 3;
 
 export const recipeIngredientSchema = z.object({
   name: z.string().trim().min(1),
@@ -17,10 +17,12 @@ export const recipeIngredientSchema = z.object({
   allergens: z.array(z.string().trim().min(1)).default([]),
 });
 
-export const recipePhotoObservationSchema = z.object({
+export const recipeImageSchema = z.object({
   sourceId: z.string().min(1),
+  kind: z.literal("generated"),
   mediaType: z.enum(["image/jpeg", "image/png", "image/webp"]),
-  description: z.string().trim().min(1).optional(),
+  model: z.string().trim().min(1),
+  generatedAt: z.string().datetime(),
 });
 
 export const recipeProvenanceSchema = z.object({
@@ -63,7 +65,7 @@ export const normalizedRecipeSchema = z.object({
       }),
     )
     .default([]),
-  photoObservations: z.array(recipePhotoObservationSchema).default([]),
+  images: z.array(recipeImageSchema).max(1).default([]),
   provenance: recipeProvenanceSchema.optional(),
 });
 

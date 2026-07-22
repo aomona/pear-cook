@@ -46,66 +46,6 @@ export async function sha256Hex(data: ArrayBuffer): Promise<string> {
     .join("");
 }
 
-async function ownedPlanExists(env: PhotoEnv, planId: string, actorId: string): Promise<boolean> {
-  const row = await env.DB.prepare(
-    "SELECT id FROM plan_artifacts WHERE id = ? AND owner_actor_id = ? AND status = 'draft'",
-  )
-    .bind(planId, actorId)
-    .first<{ id: string }>();
-  return Boolean(row);
-}
-
-export async function parseMultipartPhoto(request: Request): Promise<
-  | { buffer: ArrayBuffer; bytes: Uint8Array; declaredType: string | null; filename: string | null }
-  | Response
-> {
-  const contentType = request.headers.get("content-type");
-  if (!contentType || !contentType.startsWith("multipart/form-data")) {
-    return jsonError("Expected multipart/form-data", 415);
-  }
-
-  const formData = await request.formData();
-  const file = formData.get("photo");
-  if (!(file instanceof File)) {
-    return jsonError("Missing photo field", 400);
-  }
-
-  const buffer = (await file.arrayBuffer()) as ArrayBuffer;
-  const bytes = new Uint8Array(buffer);
-  if (bytes.length > MAX_PHOTO_BYTES) {
-    return jsonError("Photo exceeds 8 MiB limit", 413);
-  }
-
-  return {
-    buffer,
-    bytes,
-    declaredType: file.type || null,
-    filename: file.name || null,
-  };
-}
-
-export function validatePhotoBytes(
-  bytes: Uint8Array,
-  declaredType: string | null,
-): AllowedMediaType | Response {
-  const detected = mediaTypeFromMagic(bytes);
-  if (!detected) {
-    return jsonError("Unrecognized image format. Only JPEG, PNG, and WebP are accepted.", 415);
-  }
-
-  if (declaredType && !ALLOWED_MEDIA_TYPES.includes(declaredType as AllowedMediaType)) {
-    return jsonError(`Declared content type ${declaredType} is not an accepted image format`, 415);
-  }
-
-  if (declaredType && declaredType !== detected) {
-    return jsonError(
-      `File content (${detected}) does not match declared type (${declaredType})`,
-      415,
-    );
-  }
-
-  return detected;
-}
 
 async function getPhotoSource(
   env: PhotoEnv,
@@ -137,74 +77,6 @@ async function getPhotoSource(
   return { mediaType, buffer, byteSize: bytes.length };
 }
 
-async function handlePhotoPost(
-  request: Request,
-  env: PhotoEnv,
-  planId: string,
-  context: PearRequestContext,
-): Promise<Response> {
-  if (!(await ownedPlanExists(env, planId, context.actorId))) {
-    return jsonError("Draft plan not found or not owned by this cook", 404);
-  }
-
-  const parsed = await parseMultipartPhoto(request);
-  if (parsed instanceof Response) return parsed;
-
-  const { buffer, bytes, declaredType } = parsed;
-
-  const validation = validatePhotoBytes(bytes, declaredType);
-  if (validation instanceof Response) return validation;
-  const mediaType = validation;
-
-  const sourceId = crypto.randomUUID();
-  const objectKey = `photos/${planId}/${sourceId}`;
-  const checksum = await sha256Hex(buffer);
-  const byteSize = bytes.length;
-  const now = new Date().toISOString();
-
-  await env.RAW_INPUTS.put(objectKey, buffer, {
-    httpMetadata: { contentType: mediaType },
-    customMetadata: { sourceId, planId, actorId: context.actorId, checksum },
-  });
-
-  try {
-    await env.DB.prepare(
-      `INSERT INTO plan_sources (
-        id, plan_artifact_id, kind, status, label, media_type, byte_size,
-        checksum_sha256, raw_object_key, created_by_actor_id, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-      .bind(
-        sourceId,
-        planId,
-        "file",
-        "ready",
-        "Photo",
-        mediaType,
-        byteSize,
-        checksum,
-        objectKey,
-        context.actorId,
-        now,
-        now,
-      )
-      .run();
-  } catch {
-    await env.RAW_INPUTS.delete(objectKey);
-    return jsonError("Failed to store photo metadata", 500);
-  }
-
-  return Response.json(
-    {
-      sourceId,
-      mediaType,
-      byteSize,
-      checksum,
-      createdAt: now,
-    },
-    { status: 201 },
-  );
-}
 
 async function handlePhotoGet(
   request: Request,
@@ -238,9 +110,6 @@ export async function handlePhotoApi(
   const planId = decodeURIComponent(match[1]);
   const sourceId = match[2] ? decodeURIComponent(match[2]) : null;
 
-  if (request.method === "POST" && !sourceId) {
-    return handlePhotoPost(request, env, planId, context);
-  }
 
   if (request.method === "GET" && sourceId) {
     return handlePhotoGet(request, env, planId, sourceId, context);

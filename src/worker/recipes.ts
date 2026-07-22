@@ -1,3 +1,4 @@
+import { GoogleGenAI, Modality } from "@google/genai";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import type { PearEnv, PearRequestContext } from "@pear-agent/cloudflare";
 import { generateText, Output } from "ai";
@@ -5,14 +6,21 @@ import { z } from "zod";
 
 import {
   normalizedRecipeSchema,
+  recipeImageSchema,
   recipeIngredientSchema,
   recipeInstructionSchema,
-  recipePhotoObservationSchema,
   recipeProvenanceSchema,
   type NormalizedRecipe,
 } from "../domain/domain.js";
+import {
+  MAX_PHOTO_BYTES,
+  mediaTypeFromMagic,
+  sha256Hex,
+  type AllowedMediaType,
+} from "./photos.js";
 
 export type RecipeEnv = PearEnv & { GEMINI_API_KEY?: string };
+const RECIPE_IMAGE_MODEL = "gemini-3.1-flash-image-preview";
 const COOKING_MODEL = "gemini-3.5-flash-lite";
 
 const recipeContentSchema = z.object({
@@ -22,7 +30,7 @@ const recipeContentSchema = z.object({
   instructions: z.array(recipeInstructionSchema).min(1),
   notes: z.array(z.string().trim().min(1)),
   safetyNotes: z.array(z.string().trim().min(1)),
-  photoObservations: z.array(recipePhotoObservationSchema).default([]),
+  images: z.array(recipeImageSchema).max(1).default([]),
   provenance: recipeProvenanceSchema.optional(),
 });
 
@@ -44,9 +52,7 @@ const transformationOutputSchema = z.object({
   changeSummary: z.string().trim().min(1).max(500),
 });
 
-type RecipeSource =
-  | { kind: "text"; content: string; mediaType: string }
-  | { kind: "file"; data: Uint8Array; mediaType: string };
+type RecipeSource = { kind: "text"; content: string; mediaType: string };
 
 type StoredRecipeRow = {
   id: string;
@@ -89,9 +95,6 @@ async function readRecipeSource(
   if (!object) return null;
   const bytes = new Uint8Array(await object.arrayBuffer());
 
-  if (source.media_type.startsWith("image/")) {
-    return { kind: "file", data: bytes, mediaType: source.media_type };
-  }
 
   const raw = new TextDecoder().decode(bytes).slice(0, 180_000);
   const content = source.media_type === "text/html"
@@ -105,29 +108,6 @@ async function readRecipeSource(
   return { kind: "text", content, mediaType: source.media_type };
 }
 
-async function readPlanPhotoSources(
-  env: RecipeEnv,
-  planId: string,
-): Promise<Array<{ sourceId: string; mediaType: string; data: Uint8Array }>> {
-  const rows = await env.DB.prepare(
-    `SELECT id, media_type, raw_object_key, status
-     FROM plan_sources
-     WHERE plan_artifact_id = ? AND kind = 'file' AND status = 'ready'`,
-  )
-    .bind(planId)
-    .all<{ id: string; media_type: string; raw_object_key: string | null; status: string }>();
-
-  const photos: Array<{ sourceId: string; mediaType: string; data: Uint8Array }> = [];
-  for (const row of rows.results ?? []) {
-    if (!row.raw_object_key) continue;
-    const object = await env.RAW_INPUTS.get(row.raw_object_key);
-    if (!object) continue;
-    const data = new Uint8Array(await object.arrayBuffer());
-    if (!row.media_type.startsWith("image/")) continue;
-    photos.push({ sourceId: row.id, mediaType: row.media_type, data });
-  }
-  return photos;
-}
 
 function parseStoredRecipe(row: StoredRecipeRow): NormalizedRecipe {
   return normalizedRecipeSchema.parse(JSON.parse(row.normalized_json));
@@ -161,12 +141,10 @@ async function normalizeRecipe(
   const input = createRecipeSchema.parse(await request.json());
   const source = await readRecipeSource(env, planId, input.sourceId);
   if (!source) return jsonError("Recipe source is not ready", 409);
-  if (source.kind !== "text") return jsonError("Recipe source must be text", 415);
   const sourceContent = source.content;
   const model = recipeModel(env);
   if (!model) return jsonError("GEMINI_API_KEY is not configured", 503);
 
-  const photos = await readPlanPhotoSources(env, planId);
   const intent =
     input.sourceKind === "ai"
       ? "Create a complete, practical recipe from the user's request."
@@ -179,7 +157,6 @@ Requirements:
 - Split instructions into timed, concrete actions in their original order.
 - Keep safety notes explicit.
 - Do not combine this recipe with any other dish.
-- If photos are provided, describe what you observe in each photo and include photoObservations with sourceId and mediaType for every image.
 - Source kind: ${input.sourceKind}
 - User input: ${input.sourceInput}
 - Available ingredients: ${JSON.stringify(input.availableIngredients)}
@@ -189,55 +166,24 @@ Requirements:
 Source content:
 ${sourceContent}`;
 
-  const contentParts: Array<
-    | { type: "text"; text: string }
-    | { type: "file"; data: Uint8Array; mediaType: string }
-  > = [{ type: "text", text: textPrompt }];
-
-  for (const photo of photos) {
-    contentParts.push({
-      type: "file",
-      data: photo.data,
-      mediaType: photo.mediaType,
-    });
-  }
+  const contentParts = textPrompt;
 
   const { output } = await generateText({
     model,
     output: Output.object({ schema: recipeContentSchema }),
     abortSignal: request.signal,
     maxRetries: 1,
-    messages: [{ role: "user", content: contentParts }],
+    prompt: contentParts,
   });
   if (!output) return jsonError("The model did not return a normalized recipe", 502);
 
-  const photoObservations =
-    output.photoObservations?.map((obs) => ({
-      ...obs,
-      sourceId: obs.sourceId,
-      mediaType: obs.mediaType,
-    })) ?? [];
-
-  // If the model did not label photo provenance, derive it from the uploaded photos
-  if (photoObservations.length === 0 && photos.length > 0) {
-    for (const photo of photos) {
-      photoObservations.push({
-        sourceId: photo.sourceId,
-        mediaType: photo.mediaType as "image/jpeg" | "image/png" | "image/webp",
-      });
-    }
-  }
 
   const recipeId = crypto.randomUUID();
-  const photoSourceIds = photos.map((p) => p.sourceId);
-  const allSourceIds = [input.sourceId, ...photoSourceIds];
-  const dedupedSourceRefs = [...new Set(allSourceIds)].map((sourceId) => ({ sourceId }));
-
   const recipe = normalizedRecipeSchema.parse({
     id: recipeId,
     ...output,
-    photoObservations,
-    sourceRefs: dedupedSourceRefs,
+    images: [],
+    sourceRefs: [{ sourceId: input.sourceId }],
     transformationHistory: [],
   });
   const now = new Date().toISOString();
@@ -286,7 +232,7 @@ Rules:
 - Apply the instruction throughout ingredients, quantities, timing, and steps where necessary.
 - Preserve the dish identity unless the cook explicitly asks otherwise.
 - Preserve or strengthen food-safety guidance.
-- Preserve photoObservations and provenance.
+- Preserve generated recipe images and provenance.
 - Do not mention or modify other recipes.
 - Return a concise change summary.
 
@@ -301,7 +247,7 @@ ${JSON.stringify(editableRecipe)}`,
   const recipe = normalizedRecipeSchema.parse({
     id: stored.recipe.id,
     ...output.recipe,
-    photoObservations: stored.recipe.photoObservations,
+    images: stored.recipe.images,
     provenance: stored.recipe.provenance,
     sourceRefs: stored.recipe.sourceRefs,
     transformationHistory: history,
@@ -315,13 +261,160 @@ ${JSON.stringify(editableRecipe)}`,
   return Response.json({ recipe });
 }
 
+export function buildRecipeImagePrompt(recipe: NormalizedRecipe): string {
+  return [
+    "Create one photorealistic editorial food photograph of the finished dish.",
+    `Dish: ${recipe.title}`,
+    `Servings: ${recipe.servings}`,
+    `Ingredients: ${recipe.ingredients.map((ingredient) => `${ingredient.name} (${ingredient.quantity})`).join(", ")}`,
+    `Final preparation: ${recipe.instructions.at(-1)?.instruction ?? "Plate the finished dish."}`,
+    "Show one plausible finished serving that faithfully reflects these ingredients.",
+    "Use natural window light, an uncluttered neutral table, and realistic home-cooked presentation.",
+    "Do not add text, labels, logos, people, hands, packaging, utensils in motion, or ingredients not listed.",
+  ].join("\n");
+}
+
+export function decodeGeneratedImage(
+  data: string,
+  declaredMediaType: string | undefined,
+): { bytes: Uint8Array; mediaType: AllowedMediaType } {
+  if (!data) throw new Error("Image model returned empty data");
+  const binary = atob(data);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  if (bytes.byteLength > MAX_PHOTO_BYTES) throw new Error("Generated image exceeds 8 MiB limit");
+  const mediaType = mediaTypeFromMagic(bytes);
+  if (!mediaType) throw new Error("Image model returned an unsupported image format");
+  if (declaredMediaType && declaredMediaType !== mediaType) {
+    throw new Error(`Image model returned ${mediaType} bytes as ${declaredMediaType}`);
+  }
+  return { bytes, mediaType };
+}
+
+async function generateRecipeImage(
+  request: Request,
+  env: RecipeEnv,
+  planId: string,
+  recipeId: string,
+  context: PearRequestContext,
+): Promise<Response> {
+  const stored = await getOwnedRecipe(env, planId, recipeId, context.actorId);
+  if (!stored) return jsonError("Recipe not found", 404);
+  if (!env.GEMINI_API_KEY) return jsonError("GEMINI_API_KEY is not configured", 503);
+
+  let generated: { bytes: Uint8Array; mediaType: AllowedMediaType };
+  try {
+    const ai = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY });
+    const response = await ai.models.generateContent({
+      model: RECIPE_IMAGE_MODEL,
+      contents: buildRecipeImagePrompt(stored.recipe),
+      config: {
+        abortSignal: request.signal,
+        responseModalities: [Modality.IMAGE],
+        imageConfig: { aspectRatio: "4:3", imageSize: "1K" },
+      },
+    });
+    const inlineData = response.candidates
+      ?.flatMap((candidate) => candidate.content?.parts ?? [])
+      .find((part) => part.inlineData?.data)?.inlineData;
+    if (!inlineData?.data) return jsonError("Google AI did not return an image", 422);
+    generated = decodeGeneratedImage(inlineData.data, inlineData.mimeType);
+  } catch (error) {
+    if (request.signal.aborted) return jsonError("Image generation was cancelled", 499);
+    const providerMessage = error instanceof Error ? error.message : "";
+    if (providerMessage.includes("429") || providerMessage.toLowerCase().includes("quota")) {
+      return jsonError(
+        "Google AI image generation quota is unavailable. Check the API project's billing and quota.",
+        503,
+      );
+    }
+    return jsonError("Google AI could not generate this image. Try again.", 502);
+  }
+
+  const sourceId = crypto.randomUUID();
+  const objectKey = `generated-images/${planId}/${recipeId}/${sourceId}`;
+  const buffer = generated.bytes.buffer as ArrayBuffer;
+  const checksum = await sha256Hex(buffer);
+  const now = new Date().toISOString();
+  const previousImage = stored.recipe.images[0];
+  const previousSource = previousImage
+    ? await env.DB.prepare(
+        "SELECT raw_object_key FROM plan_sources WHERE id = ? AND plan_artifact_id = ?",
+      )
+        .bind(previousImage.sourceId, planId)
+        .first<{ raw_object_key: string | null }>()
+    : null;
+  const image = recipeImageSchema.parse({
+    sourceId,
+    kind: "generated",
+    mediaType: generated.mediaType,
+    model: RECIPE_IMAGE_MODEL,
+    generatedAt: now,
+  });
+  const recipe = normalizedRecipeSchema.parse({ ...stored.recipe, images: [image] });
+
+  await env.RAW_INPUTS.put(objectKey, buffer, {
+    httpMetadata: { contentType: generated.mediaType },
+    customMetadata: {
+      sourceId,
+      planId,
+      recipeId,
+      actorId: context.actorId,
+      checksum,
+      generatedBy: RECIPE_IMAGE_MODEL,
+    },
+  });
+
+  try {
+    const statements = [
+      env.DB.prepare(
+        `INSERT INTO plan_sources (
+          id, plan_artifact_id, kind, status, label, media_type, byte_size,
+          checksum_sha256, raw_object_key, created_by_actor_id, created_at, updated_at
+        ) VALUES (?, ?, 'file', 'ready', ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(
+        sourceId,
+        planId,
+        `AI-generated image: ${stored.recipe.title}`,
+        generated.mediaType,
+        generated.bytes.byteLength,
+        checksum,
+        objectKey,
+        context.actorId,
+        now,
+        now,
+      ),
+      env.DB.prepare(
+        "UPDATE recipe_drafts SET normalized_json = ?, updated_at = ? WHERE id = ? AND owner_actor_id = ?",
+      ).bind(JSON.stringify(recipe), now, recipeId, context.actorId),
+    ];
+    if (previousImage) {
+      statements.push(
+        env.DB.prepare("DELETE FROM plan_sources WHERE id = ? AND plan_artifact_id = ?")
+          .bind(previousImage.sourceId, planId),
+      );
+    }
+    await env.DB.batch(statements);
+  } catch {
+    await env.RAW_INPUTS.delete(objectKey);
+    return jsonError("Failed to save the generated image", 500);
+  }
+
+  if (previousSource?.raw_object_key) {
+    await env.RAW_INPUTS.delete(previousSource.raw_object_key);
+  }
+  return Response.json({ recipe }, { status: 201 });
+}
+
 export async function handleRecipeApi(
   request: Request,
   env: RecipeEnv,
   context: PearRequestContext,
 ): Promise<Response> {
   const url = new URL(request.url);
-  const match = url.pathname.match(/^\/api\/plans\/([^/]+)\/recipes(?:\/([^/]+))?(?:\/(transform))?$/);
+  const match = url.pathname.match(/^\/api\/plans\/([^/]+)\/recipes(?:\/([^/]+))?(?:\/(transform|image))?$/);
   if (!match) return jsonError("Not found", 404);
   const planId = decodeURIComponent(match[1]);
   const recipeId = match[2] ? decodeURIComponent(match[2]) : null;
@@ -348,6 +441,10 @@ export async function handleRecipeApi(
     return transformRecipe(request, env, planId, recipeId, context);
   }
 
+  if (recipeId && action === "image" && request.method === "POST") {
+    return generateRecipeImage(request, env, planId, recipeId, context);
+  }
+
   if (recipeId && !action && request.method === "PUT") {
     const stored = await getOwnedRecipe(env, planId, recipeId, context.actorId);
     if (!stored) return jsonError("Recipe not found", 404);
@@ -355,7 +452,7 @@ export async function handleRecipeApi(
     const recipe = normalizedRecipeSchema.parse({
       id: stored.recipe.id,
       ...editable,
-      photoObservations: stored.recipe.photoObservations,
+      images: stored.recipe.images,
       provenance: stored.recipe.provenance,
       sourceRefs: stored.recipe.sourceRefs,
       transformationHistory: stored.recipe.transformationHistory,
@@ -367,14 +464,30 @@ export async function handleRecipeApi(
   }
 
   if (recipeId && !action && request.method === "DELETE") {
-    const result = await env.DB.prepare(
-      "DELETE FROM recipe_drafts WHERE id = ? AND plan_artifact_id = ? AND owner_actor_id = ?",
-    )
-      .bind(recipeId, planId, context.actorId)
-      .run();
-    return result.meta.changes > 0
-      ? new Response(null, { status: 204 })
-      : jsonError("Recipe not found", 404);
+    const stored = await getOwnedRecipe(env, planId, recipeId, context.actorId);
+    if (!stored) return jsonError("Recipe not found", 404);
+    const image = stored.recipe.images[0];
+    const source = image
+      ? await env.DB.prepare(
+          "SELECT raw_object_key FROM plan_sources WHERE id = ? AND plan_artifact_id = ?",
+        )
+          .bind(image.sourceId, planId)
+          .first<{ raw_object_key: string | null }>()
+      : null;
+    const statements = [
+      env.DB.prepare(
+        "DELETE FROM recipe_drafts WHERE id = ? AND plan_artifact_id = ? AND owner_actor_id = ?",
+      ).bind(recipeId, planId, context.actorId),
+    ];
+    if (image) {
+      statements.push(
+        env.DB.prepare("DELETE FROM plan_sources WHERE id = ? AND plan_artifact_id = ?")
+          .bind(image.sourceId, planId),
+      );
+    }
+    await env.DB.batch(statements);
+    if (source?.raw_object_key) await env.RAW_INPUTS.delete(source.raw_object_key);
+    return new Response(null, { status: 204 });
   }
 
   return jsonError("Method not allowed", 405);
