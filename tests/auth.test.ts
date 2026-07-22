@@ -18,6 +18,9 @@ describe("OAuth return path validation", () => {
     "///evil.example",
     "/\\evil.example",
     "/plans\\evil.example",
+    "/.//evil.com",
+    "/..//evil.com",
+    "/./../..//evil.com",
   ])("falls back to the app root for unsafe return target %j", (returnTo) => {
     expect(sanitizeReturnTo(returnTo)).toBe("/");
   });

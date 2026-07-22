@@ -62,12 +62,10 @@ export function App() {
         </nav>
       )}
 
-      <main className="main-content">
         {route.page === "plans" && <PlansPage />}
         {route.page === "input" && <InputPage planId={route.planId} />}
         {route.page === "plan" && <PlanPage planId={route.planId} />}
         {route.page === "execute" && <ExecutePage sessionId={route.sessionId} />}
-      </main>
     </div>
   );
 }

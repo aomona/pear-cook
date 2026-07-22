@@ -15,6 +15,7 @@ import {
 } from "@pear-agent/cloudflare";
 import { executionGoalSchema, executionPlanSchema } from "@pear-agent/core";
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
+import { ZodError } from "zod";
 
 import {
   cookingDomain,
@@ -27,6 +28,10 @@ import {
   type AuthEnv,
 } from "./auth.js";
 import { handleRecipeApi } from "./recipes.js";
+import { readEstimateProfile, snapshotCompileEstimateProfile } from "./estimates.js";
+import { handleFeedbackApi } from "./feedback.js";
+import { handlePhotoApi } from "./photos.js";
+import { createCookingReplanRuntime } from "./replan.js";
 
 export { ExecutionSessionAgent };
 
@@ -34,7 +39,7 @@ type CookingEnv = PearEnv & AuthEnv;
 const COOKING_MODEL = "gemini-3.5-flash-lite";
 const COOKING_LIVE_MODEL = "gemini-3.1-flash-live-preview";
 
-function createCookingCompileRuntime(env: CookingEnv) {
+function createCookingCompileRuntime(env: CookingEnv, estimateProfile: Record<string, number> = {}) {
   if (!env.GEMINI_API_KEY) return undefined;
   const google = createGoogleGenerativeAI({ apiKey: env.GEMINI_API_KEY });
   const model = google(COOKING_MODEL);
@@ -73,6 +78,7 @@ function createCookingCompileRuntime(env: CookingEnv) {
           plan: buildCookingPlan(
             input.goal,
             cookingDomain.schemas.normalizedInput.parse(input.normalizedInput),
+            { estimateProfile },
           ),
           generation: {
             id: crypto.randomUUID(),
@@ -114,7 +120,12 @@ export class PlanCompileWorkflow extends WorkflowEntrypoint<CookingEnv, PlanComp
           timeout: "30 minutes",
         },
         async () => {
-          const runtime = createCookingCompileRuntime(this.env);
+          const estimateProfile = await snapshotCompileEstimateProfile(
+            this.env,
+            event.payload.jobId,
+            event.payload.context.actorId,
+          );
+          const runtime = createCookingCompileRuntime(this.env, estimateProfile);
           if (!runtime) throw new Error("GEMINI_API_KEY is not configured");
           const result = await runPlanCompileJob({
             env: this.env,
@@ -183,7 +194,15 @@ function createAuthorize(env: CookingEnv): AuthorizeFn {
       }
       return;
     }
-    if (operation.type === "session.create") return;
+    if (operation.type === "session.create") {
+      if (operation.domainId !== cookingDomain.id) {
+        throw new AuthorizationError("Unknown cooking domain");
+      }
+      return;
+    }
+    if (operation.type === "replan.request" && operation.mode !== "confirm") {
+      throw new AuthorizationError("Cooking replans require explicit confirmation");
+    }
     if ("sessionId" in operation) {
       if (!(await actorOwnsSession(env, operation.sessionId, context.actorId))) {
         throw new AuthorizationError("Session not found or not owned by this cook");
@@ -199,17 +218,21 @@ function createCookingWorker(env: CookingEnv) {
   const google = env.GEMINI_API_KEY
     ? createGoogleGenerativeAI({ apiKey: env.GEMINI_API_KEY })
     : null;
+  const replanRuntime = createCookingReplanRuntime(env);
   return createPearWorker({
     authorize: createAuthorize(env),
     resolveContext: (request) => resolveAuthenticatedContext(request, env),
     geminiLiveModel: COOKING_LIVE_MODEL,
     realtimeInstructions: cookingDomain.realtime.instructions,
     realtimeLocale: cookingDomain.realtime.defaultLocale,
+    ...(replanRuntime ? { replanRuntime } : {}),
     planGenerator: {
       async generatePlan(input) {
+        const estimateProfile = await readEstimateProfile(env, input.context.actorId);
         return buildCookingPlan(
           executionGoalSchema.parse(input.goal),
           cookingNormalizedInputSchema.parse(input.normalizedInput),
+          { estimateProfile },
         );
       },
     },
@@ -271,6 +294,27 @@ async function securePearRequest(request: Request, env: CookingEnv): Promise<Req
     return new Request(url, request);
   }
 
+  const eventMatch = url.pathname.match(/^\/sessions\/([^/]+)\/events$/);
+  if (eventMatch && request.method === "POST") {
+    const body = (await request.clone().json()) as Record<string, unknown>;
+    if (body.type === "domain_event") {
+      const parsed = cookingDomain.schemas.events.safeParse(body.payload);
+      if (!parsed.success || body.domainType !== parsed.data.type) {
+        return Response.json({ error: "Invalid cooking Domain event" }, { status: 400 });
+      }
+    }
+    const headers = new Headers(request.headers);
+    headers.set("content-type", "application/json");
+    return new Request(request, {
+      body: JSON.stringify({
+        ...body,
+        sessionId: decodeURIComponent(eventMatch[1]),
+        actorId: context.actorId,
+      }),
+      headers,
+    });
+  }
+
   if (url.pathname === "/sessions" && request.method === "POST") {
     const body = (await request.clone().json()) as { planArtifactId?: unknown; domainId?: unknown };
     if (
@@ -294,9 +338,17 @@ export default {
     try {
       if (url.pathname.startsWith("/auth/")) return await handleAuthRequest(request, env);
       if (url.pathname === "/api/plans") return await ownerScopedPlanList(request, env);
+      if (url.pathname.startsWith("/api/plans/") && url.pathname.includes("/photos")) {
+        const photoContext = await resolveAuthenticatedContext(request, env);
+        return await handlePhotoApi(request, env, photoContext);
+      }
       if (url.pathname.startsWith("/api/plans/") && url.pathname.includes("/recipes")) {
         const recipeContext = await resolveAuthenticatedContext(request, env);
         return await handleRecipeApi(request, env, recipeContext);
+      }
+      if (url.pathname.startsWith("/api/sessions/") && url.pathname.endsWith("/feedback")) {
+        const feedbackContext = await resolveAuthenticatedContext(request, env);
+        return await handleFeedbackApi(request, env, feedbackContext);
       }
 
       if (
@@ -310,11 +362,17 @@ export default {
       }
     } catch (error) {
       const status =
-        error instanceof Error && "status" in error && typeof error.status === "number"
-          ? error.status
-          : 500;
+        error instanceof ZodError
+          ? 400
+          : error instanceof Error && "status" in error && typeof error.status === "number"
+            ? error.status
+            : 500;
       const message =
-        status < 500 && error instanceof Error ? error.message : "Request failed. Please try again.";
+        error instanceof ZodError
+          ? "Invalid request"
+          : status < 500 && error instanceof Error
+            ? error.message
+            : "Request failed. Please try again.";
       return Response.json({ error: message }, { status });
     }
 

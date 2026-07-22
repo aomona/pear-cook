@@ -6,6 +6,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { getSafeStorageItem, setSafeStorageItem } from "./safe-storage";
 
 export type Locale = "ja" | "en";
 
@@ -118,6 +119,27 @@ const ja = {
     dietaryPlaceholder: "ヴィーガン、ナッツ不使用",
     photoNotes: "写真から分かったこと",
     photoPlaceholder: "ほうれん草は半袋、トマトは完熟",
+    photosLabel: "レシピ写真",
+    photosDescription: "JPEG、PNG、WebPを複数選択できます。レシピを読み取る前に順番にアップロードします。",
+    choosePhotos: "写真を選択",
+    uploadingPhotos: "写真をアップロード中 ({current}/{total})",
+    uploadComplete: "写真をアップロードしました",
+    uploadError: "写真のアップロードに失敗しました",
+    uploadRetry: "写真を再試行",
+    removePhoto: "{name}を削除",
+    photoObservation: "写真からの観察",
+    provenance: "出典",
+    confidence: "信頼度 {percent}%",
+    extractedByAi: "AI抽出",
+    extractedByUser: "ユーザー入力",
+    extractedByImport: "インポート",
+    allergens: "アレルゲン",
+    noAllergens: "アレルゲン情報なし",
+    amountFallback: "数量未指定",
+    capacityTitle: "調理設備の上限",
+    burnerCapacity: "コンロ数",
+    ovenCapacity: "オーブン数",
+    capacityHelp: "同時に使える設備数を指定します。",
     planningNotes: "完成時刻や器具の条件",
     planningPlaceholder: "18時30分に食卓へ。コンロは2口。",
     compileTitle: "調理順を作成",
@@ -144,6 +166,17 @@ const ja = {
     totalSteps: "全{count}工程",
     finishTitle: "すべての料理を同時に食卓へ",
     finishDescription: "T−10なら、完成予定の10分前に始める作業です。",
+    photoRefs: "写真と出典",
+    photoPreviewAlt: "{title}のレシピ写真",
+    provenanceLabel: "レシピの出典",
+    confidenceLabel: "信頼度 {percent}%",
+    allergensLabel: "アレルゲンに注意",
+    quantityLabel: "分量",
+    handsOn: "手を動かす作業",
+    passive: "待機・受動作業",
+    equipmentLabel: "器具",
+    resourcesLabel: "設備",
+    timingLabel: "所要時間",
     noSteps: "確認できる工程がありません",
     noStepsDescription: "レシピ画面へ戻り、調理順を作り直してください。",
     recipeSummary: "{servings} · {steps}",
@@ -221,6 +254,24 @@ const ja = {
     statusActive: "進行中",
     statusReady: "開始可能",
     statusLater: "このあと",
+  },
+  sample: {
+    title: "PEAR Cook サンプル",
+    description: "ログインせずに、レシピ入力と調理順の確認画面をご覧いただけます。",
+    signIn: "ログインして始める",
+    openApp: "アプリを開く",
+    sampleLabel: "サンプルの調理順",
+    recipeTitle: "春野菜のパスタ",
+    recipeDescription: "写真とレシピ情報から整理した例です。",
+    stepPrep: "アスパラと新玉ねぎを切り、パスタ用の湯を沸かします。",
+    stepCook: "野菜を炒めながらパスタをゆで、ゆで汁でソースを整えます。",
+    stepServe: "パスタとソースを合わせ、温かいうちに盛り付けます。",
+    tryStep: "サンプルを進める",
+    nextStep: "次の手順",
+    finishSample: "調理を完了",
+    sampleComplete: "サンプルを完了しました",
+    resetSample: "最初から見る",
+    progress: "{current} / {total} 手順",
   },
 } as const;
 
@@ -300,6 +351,27 @@ const en: Messages = {
     urlDescription: "Import a public recipe page",
     textLabel: "Recipe text",
     textDescription: "Paste ingredients and instructions",
+    photosLabel: "Recipe photos",
+    photosDescription: "Select multiple JPEG, PNG, or WebP images. They upload sequentially before recipe extraction.",
+    choosePhotos: "Choose photos",
+    uploadingPhotos: "Uploading photos ({current}/{total})",
+    uploadComplete: "Photos uploaded",
+    uploadError: "Photo upload failed",
+    uploadRetry: "Retry photo upload",
+    removePhoto: "Remove {name}",
+    photoObservation: "Photo observations",
+    provenance: "Source",
+    confidence: "Confidence {percent}%",
+    extractedByAi: "AI extracted",
+    extractedByUser: "User provided",
+    extractedByImport: "Imported",
+    allergens: "Allergens",
+    noAllergens: "No allergen information",
+    amountFallback: "Quantity not specified",
+    capacityTitle: "Equipment capacity",
+    burnerCapacity: "Burners",
+    ovenCapacity: "Ovens",
+    capacityHelp: "Set how many pieces of equipment can run at once.",
     dishLabel: "Dish request",
     urlFieldLabel: "Public recipe URL",
     textFieldLabel: "Ingredients and instructions",
@@ -358,6 +430,17 @@ const en: Messages = {
     totalSteps: "{count} steps total",
     finishTitle: "Bring every dish to the table together",
     finishDescription: "T−10 means start that task 10 minutes before the target finish time.",
+    photoRefs: "Photos and sources",
+    photoPreviewAlt: "{title} recipe photo",
+    provenanceLabel: "Recipe source",
+    confidenceLabel: "Confidence {percent}%",
+    allergensLabel: "Allergen warning",
+    quantityLabel: "Quantity",
+    handsOn: "Hands-on",
+    passive: "Passive / waiting",
+    equipmentLabel: "Equipment",
+    resourcesLabel: "Resources",
+    timingLabel: "Duration",
     noSteps: "There are no steps to review",
     noStepsDescription: "Return to recipes and rebuild the cooking order.",
     recipeSummary: "{servings} · {steps}",
@@ -436,13 +519,31 @@ const en: Messages = {
     statusReady: "Ready",
     statusLater: "Later",
   },
+  sample: {
+    title: "PEAR Cook sample",
+    description: "Explore recipe input and cooking-order review without signing in.",
+    signIn: "Sign in to get started",
+    openApp: "Open the app",
+    sampleLabel: "Sample cooking order",
+    recipeTitle: "Spring vegetable pasta",
+    recipeDescription: "An example organized from recipe information and photos.",
+    stepPrep: "Slice the asparagus and spring onion, then bring the pasta water to a boil.",
+    stepCook: "Sauté the vegetables while the pasta cooks, then loosen the sauce with pasta water.",
+    stepServe: "Toss the pasta with the sauce and plate while hot.",
+    tryStep: "Try the sample",
+    nextStep: "Next step",
+    finishSample: "Finish cooking",
+    sampleComplete: "Sample complete",
+    resetSample: "Start again",
+    progress: "Step {current} of {total}",
+  },
 };
 
 const messagesByLocale: Record<Locale, Messages> = { ja, en };
 const STORAGE_KEY = "pear-cook.locale";
 
 function initialLocale(): Locale {
-  const stored = window.localStorage.getItem(STORAGE_KEY);
+  const stored = getSafeStorageItem(STORAGE_KEY);
   if (stored === "ja" || stored === "en") return stored;
   return window.navigator.language.toLowerCase().startsWith("ja") ? "ja" : "en";
 }
@@ -466,7 +567,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     document.documentElement.lang = locale;
-    window.localStorage.setItem(STORAGE_KEY, locale);
+    setSafeStorageItem(STORAGE_KEY, locale);
   }, [locale]);
 
   const value = useMemo<I18nContextValue>(() => ({

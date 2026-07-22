@@ -16,10 +16,34 @@ import { useAuth } from "../Auth";
 import { useI18n } from "../i18n";
 import { links } from "../navigation";
 
+const jaUnits: Record<string, string> = {
+  g: "g", gram: "g", grams: "g", kg: "kg", kilogram: "kg", kilograms: "kg",
+  ml: "ml", milliliter: "ml", milliliters: "ml", l: "L", liter: "L", liters: "L",
+  tsp: "小さじ", teaspoon: "小さじ", teaspoons: "小さじ", tbsp: "大さじ", tablespoon: "大さじ", tablespoons: "大さじ",
+  cup: "カップ", cups: "カップ", piece: "個", pieces: "個", clove: "片", cloves: "片",
+  can: "缶", cans: "缶", package: "袋", packages: "袋", pinch: "ひとつまみ",
+};
+
+const jaAllergens: Record<string, string> = {
+  milk: "乳", dairy: "乳", egg: "卵", eggs: "卵", fish: "魚", shellfish: "甲殻類",
+  peanut: "落花生", peanuts: "落花生", nuts: "木の実", "tree nuts": "木の実",
+  wheat: "小麦", soy: "大豆", soybean: "大豆", sesame: "ごま",
+};
+
+function localizeUnit(unit: string | undefined, locale: "ja" | "en") {
+  if (!unit || locale === "en") return unit ?? "";
+  return jaUnits[unit.trim().toLowerCase()] ?? unit;
+}
+
+function localizeAllergen(allergen: string, locale: "ja" | "en") {
+  if (locale === "en") return allergen;
+  return jaAllergens[allergen.trim().toLowerCase()] ?? allergen;
+}
+
 export function PlanPage({ planId }: { planId: string }) {
   const { client } = usePearContext();
   const { user } = useAuth();
-  const { messages, format } = useI18n();
+  const { locale, messages, format } = useI18n();
   const session = useExecutionSession();
   const artifact = useQuery({ queryKey: ["plan", planId], queryFn: () => client.getPlan(planId) });
   const [reviewed, setReviewed] = useState(false);
@@ -138,6 +162,11 @@ export function PlanPage({ planId }: { planId: string }) {
                   </div>
                   {recipe.transformationHistory.length > 0 && <span className="plain-status">{messages.review.adjusted}</span>}
                 </header>
+                {(recipe.provenance || recipe.photoObservations.length > 0) && <div className="recipe-evidence">
+                  {recipe.provenance && <span className="plain-status">{messages.review.provenanceLabel}: {recipe.provenance.extractedBy} · {format(messages.review.confidenceLabel, { percent: Math.round(recipe.provenance.confidence * 100) })}</span>}
+                  {recipe.photoObservations.map((photo) => <figure key={photo.sourceId}><img src={`/api/plans/${encodeURIComponent(planId)}/photos/${encodeURIComponent(photo.sourceId)}`} alt={format(messages.review.photoPreviewAlt, { title: recipe.title })} /><figcaption>{photo.description || messages.review.photoRefs}</figcaption></figure>)}
+                </div>}
+                <ul className="review-ingredients">{recipe.ingredients.map((ingredient, index) => <li key={`${ingredient.name}-${index}`}><span>{ingredient.name}</span><strong>{ingredient.amount != null ? `${ingredient.amount} ${localizeUnit(ingredient.unit || ingredient.canonicalUnit, locale)}` : ingredient.quantity}</strong>{ingredient.allergens.length > 0 && <span className="allergen-chip">{ingredient.allergens.map((allergen) => localizeAllergen(allergen, locale)).join(", ")}</span>}</li>)}</ul>
                 <ol>
                   {laneSteps.map(({ step, timing }) => {
                     const isWait = timing.kind === "wait";

@@ -9,7 +9,7 @@ import {
   Plus,
   Trash2,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
 
 import { Button } from "../../components/ui/button";
@@ -26,6 +26,8 @@ const errorResponseSchema = z.object({ error: z.string() });
 type InputKind = "ai" | "url" | "text";
 
 const sourceResponseSchema = z.object({ source: z.object({ id: z.string().min(1) }) });
+const photoUploadResponseSchema = z.object({ sourceId: z.string().min(1), mediaType: z.enum(["image/jpeg", "image/png", "image/webp"]) });
+type PendingPhoto = { file: File; url: string; status: "pending" | "uploading" | "uploaded" | "error"; sourceId?: string; mediaType?: "image/jpeg" | "image/png" | "image/webp" };
 
 function listValues(value: string): string[] {
   return value
@@ -62,6 +64,15 @@ export function InputPage({ planId }: { planId: string }) {
   const [adding, setAdding] = useState(false);
   const [planningNotes, setPlanningNotes] = useState("");
   const [availableIngredients, setAvailableIngredients] = useState("");
+  const [photos, setPhotos] = useState<PendingPhoto[]>([]);
+  const photosRef = useRef<PendingPhoto[]>([]);
+  const [uploadingPhotoIndex, setUploadingPhotoIndex] = useState<number | null>(null);
+  const [burnerCapacity, setBurnerCapacity] = useState(2);
+  const [ovenCapacity, setOvenCapacity] = useState(1);
+  useEffect(() => () => photosRef.current.forEach((photo) => URL.revokeObjectURL(photo.url)), []);
+  useEffect(() => {
+    photosRef.current = photos;
+  }, [photos]);
   const [dietaryConstraints, setDietaryConstraints] = useState("");
   const [photoNotes, setPhotoNotes] = useState("");
   const [transformInstructions, setTransformInstructions] = useState<Record<string, string>>({});
@@ -71,12 +82,38 @@ export function InputPage({ planId }: { planId: string }) {
 
   const mealTitle = artifact.data?.title || messages.input.newMeal;
 
+  async function uploadPhotos() {
+    const uploaded: { sourceId: string; mediaType: "image/jpeg" | "image/png" | "image/webp" }[] = [];
+    for (let index = 0; index < photos.length; index += 1) {
+      const photo = photos[index];
+      if (photo.status === "uploaded" && photo.sourceId && photo.mediaType) {
+        uploaded.push({ sourceId: photo.sourceId, mediaType: photo.mediaType });
+        continue;
+      }
+      setUploadingPhotoIndex(index);
+      setPhotos((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, status: "uploading" } : item));
+      const body = new FormData();
+      body.append("photo", photo.file);
+      const response = await fetch(`/api/plans/${encodeURIComponent(planId)}/photos`, { method: "POST", body });
+      if (!response.ok) {
+        setPhotos((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, status: "error" } : item));
+        throw new Error(messages.input.uploadError);
+      }
+      const result = photoUploadResponseSchema.parse(await response.json());
+      uploaded.push(result);
+      setPhotos((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, status: "uploaded", sourceId: result.sourceId, mediaType: result.mediaType } : item));
+    }
+    setUploadingPhotoIndex(null);
+    return uploaded;
+  }
   async function addRecipe() {
     const cleanInput = sourceInput.trim();
     if (!cleanInput) return;
     setAdding(true);
     setError(null);
+
     try {
+      const uploadedPhotos = await uploadPhotos();
       const sourceResponse = await fetch(`/plans/${encodeURIComponent(planId)}/sources`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -102,6 +139,7 @@ export function InputPage({ planId }: { planId: string }) {
           availableIngredients: listValues(availableIngredients),
           dietaryConstraints: listValues(dietaryConstraints),
           photoNotes: photoNotes.trim() || null,
+          photoSourceIds: uploadedPhotos.map((photo) => photo.sourceId),
         }),
       });
       if (!response.ok) throw new Error(await errorMessage(response, messages.common.requestFailed));
@@ -109,10 +147,13 @@ export function InputPage({ planId }: { planId: string }) {
       await recipes.refetch();
       setExpandedIds((current) => ({ ...current, [recipe.id]: true }));
       setSourceInput("");
+      photos.forEach((photo) => URL.revokeObjectURL(photo.url));
+      setPhotos([]);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
       setAdding(false);
+      setUploadingPhotoIndex(null);
     }
   }
 
@@ -166,6 +207,10 @@ export function InputPage({ planId }: { planId: string }) {
         dietaryConstraints: listValues(dietaryConstraints),
         photoNotes: photoNotes.trim() || null,
         planningNotes: planningNotes.trim() || null,
+        kitchenCapacities: [
+          { id: "burner", capacity: Math.max(0, burnerCapacity) },
+          { id: "oven", capacity: Math.max(0, ovenCapacity) },
+        ],
       });
       if (result.artifact) window.location.hash = links.plan(planId).slice(1);
     } catch (caught) {
@@ -237,6 +282,16 @@ export function InputPage({ planId }: { planId: string }) {
                       : messages.input.textPlaceholder
                 }
               />
+            </div>
+            <div className="field-group photo-upload-field">
+              <Label htmlFor="recipe-photos">{messages.input.photosLabel}</Label>
+              <p className="field-help">{messages.input.photosDescription}</p>
+              <Input id="recipe-photos" type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={(event) => {
+                const next = Array.from(event.target.files ?? []).filter((file) => ["image/jpeg", "image/png", "image/webp"].includes(file.type)).map((file) => ({ file, url: URL.createObjectURL(file), status: "pending" as const }));
+                setPhotos((current) => [...current, ...next]);
+                event.currentTarget.value = "";
+              }} />
+              {photos.length > 0 && <ul className="photo-upload-list">{photos.map((photo, index) => <li key={`${photo.file.name}-${index}`}><img src={photo.url} alt="" /><span>{photo.file.name} {photo.status === "uploading" && messages.input.uploadingPhotos.replace("{current}", String(index + 1)).replace("{total}", String(photos.length))} {photo.status === "error" && messages.input.uploadError} {photo.status === "uploaded" && messages.input.uploadComplete}</span><Button type="button" variant="ghost" size="icon" aria-label={format(messages.input.removePhoto, { name: photo.file.name })} disabled={uploadingPhotoIndex === index} onClick={() => { URL.revokeObjectURL(photo.url); setPhotos((current) => current.filter((_, itemIndex) => itemIndex !== index)); }}><Trash2 /></Button></li>)}</ul>}
             </div>
 
             <Button
@@ -396,6 +451,14 @@ export function InputPage({ planId }: { planId: string }) {
                 <Label htmlFor="planning-notes">{messages.input.planningNotes} <span className="optional">{messages.common.optional}</span></Label>
                 <Textarea id="planning-notes" rows={3} value={planningNotes} onChange={(event) => setPlanningNotes(event.target.value)} placeholder={messages.input.planningPlaceholder} />
               </div>
+              <fieldset className="capacity-controls">
+                <legend>{messages.input.capacityTitle}</legend>
+                <p className="field-help">{messages.input.capacityHelp}</p>
+                <Label htmlFor="burner-capacity">{messages.input.burnerCapacity}</Label>
+                <Input id="burner-capacity" type="number" min={0} value={burnerCapacity} onChange={(event) => setBurnerCapacity(Number(event.target.value) || 0)} />
+                <Label htmlFor="oven-capacity">{messages.input.ovenCapacity}</Label>
+                <Input id="oven-capacity" type="number" min={0} value={ovenCapacity} onChange={(event) => setOvenCapacity(Number(event.target.value) || 0)} />
+              </fieldset>
             </div>
           </section>
 
