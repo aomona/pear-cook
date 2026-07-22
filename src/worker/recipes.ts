@@ -7,6 +7,8 @@ import {
   normalizedRecipeSchema,
   recipeIngredientSchema,
   recipeInstructionSchema,
+  recipePhotoObservationSchema,
+  recipeProvenanceSchema,
   type NormalizedRecipe,
 } from "../domain/domain.js";
 
@@ -20,6 +22,8 @@ const recipeContentSchema = z.object({
   instructions: z.array(recipeInstructionSchema).min(1),
   notes: z.array(z.string().trim().min(1)),
   safetyNotes: z.array(z.string().trim().min(1)),
+  photoObservations: z.array(recipePhotoObservationSchema).default([]),
+  provenance: recipeProvenanceSchema.optional(),
 });
 
 const createRecipeSchema = z.object({
@@ -39,6 +43,10 @@ const transformationOutputSchema = z.object({
   recipe: recipeContentSchema,
   changeSummary: z.string().trim().min(1).max(500),
 });
+
+type RecipeSource =
+  | { kind: "text"; content: string; mediaType: string }
+  | { kind: "file"; data: Uint8Array; mediaType: string };
 
 type StoredRecipeRow = {
   id: string;
@@ -70,7 +78,7 @@ async function readRecipeSource(
   env: RecipeEnv,
   planId: string,
   sourceId: string,
-): Promise<{ content: string; mediaType: string } | null> {
+): Promise<RecipeSource | null> {
   const source = await env.DB.prepare(
     "SELECT raw_object_key, media_type, status FROM plan_sources WHERE id = ? AND plan_artifact_id = ?",
   )
@@ -79,7 +87,13 @@ async function readRecipeSource(
   if (!source?.raw_object_key || source.status !== "ready") return null;
   const object = await env.RAW_INPUTS.get(source.raw_object_key);
   if (!object) return null;
-  const raw = new TextDecoder().decode(await object.arrayBuffer()).slice(0, 180_000);
+  const bytes = new Uint8Array(await object.arrayBuffer());
+
+  if (source.media_type.startsWith("image/")) {
+    return { kind: "file", data: bytes, mediaType: source.media_type };
+  }
+
+  const raw = new TextDecoder().decode(bytes).slice(0, 180_000);
   const content = source.media_type === "text/html"
     ? raw
         .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
@@ -88,7 +102,31 @@ async function readRecipeSource(
         .replace(/\s+/g, " ")
         .trim()
     : raw;
-  return { content, mediaType: source.media_type };
+  return { kind: "text", content, mediaType: source.media_type };
+}
+
+async function readPlanPhotoSources(
+  env: RecipeEnv,
+  planId: string,
+): Promise<Array<{ sourceId: string; mediaType: string; data: Uint8Array }>> {
+  const rows = await env.DB.prepare(
+    `SELECT id, media_type, raw_object_key, status
+     FROM plan_sources
+     WHERE plan_artifact_id = ? AND kind = 'file' AND status = 'ready'`,
+  )
+    .bind(planId)
+    .all<{ id: string; media_type: string; raw_object_key: string | null; status: string }>();
+
+  const photos: Array<{ sourceId: string; mediaType: string; data: Uint8Array }> = [];
+  for (const row of rows.results ?? []) {
+    if (!row.raw_object_key) continue;
+    const object = await env.RAW_INPUTS.get(row.raw_object_key);
+    if (!object) continue;
+    const data = new Uint8Array(await object.arrayBuffer());
+    if (!row.media_type.startsWith("image/")) continue;
+    photos.push({ sourceId: row.id, mediaType: row.media_type, data });
+  }
+  return photos;
 }
 
 function parseStoredRecipe(row: StoredRecipeRow): NormalizedRecipe {
@@ -123,24 +161,25 @@ async function normalizeRecipe(
   const input = createRecipeSchema.parse(await request.json());
   const source = await readRecipeSource(env, planId, input.sourceId);
   if (!source) return jsonError("Recipe source is not ready", 409);
+  if (source.kind !== "text") return jsonError("Recipe source must be text", 415);
+  const sourceContent = source.content;
   const model = recipeModel(env);
   if (!model) return jsonError("GEMINI_API_KEY is not configured", 503);
+
+  const photos = await readPlanPhotoSources(env, planId);
   const intent =
     input.sourceKind === "ai"
       ? "Create a complete, practical recipe from the user's request."
       : "Extract one complete recipe faithfully from the supplied source.";
-  const { output } = await generateText({
-    model,
-    output: Output.object({ schema: recipeContentSchema }),
-    abortSignal: request.signal,
-    maxRetries: 1,
-    prompt: `${intent}
+
+  const textPrompt = `${intent}
 
 Requirements:
 - Return ingredient quantities that a home cook can follow.
 - Split instructions into timed, concrete actions in their original order.
 - Keep safety notes explicit.
 - Do not combine this recipe with any other dish.
+- If photos are provided, describe what you observe in each photo and include photoObservations with sourceId and mediaType for every image.
 - Source kind: ${input.sourceKind}
 - User input: ${input.sourceInput}
 - Available ingredients: ${JSON.stringify(input.availableIngredients)}
@@ -148,15 +187,57 @@ Requirements:
 - Notes from photos: ${input.photoNotes ?? "None"}
 
 Source content:
-${source.content}`,
+${sourceContent}`;
+
+  const contentParts: Array<
+    | { type: "text"; text: string }
+    | { type: "file"; data: Uint8Array; mediaType: string }
+  > = [{ type: "text", text: textPrompt }];
+
+  for (const photo of photos) {
+    contentParts.push({
+      type: "file",
+      data: photo.data,
+      mediaType: photo.mediaType,
+    });
+  }
+
+  const { output } = await generateText({
+    model,
+    output: Output.object({ schema: recipeContentSchema }),
+    abortSignal: request.signal,
+    maxRetries: 1,
+    messages: [{ role: "user", content: contentParts }],
   });
   if (!output) return jsonError("The model did not return a normalized recipe", 502);
 
+  const photoObservations =
+    output.photoObservations?.map((obs) => ({
+      ...obs,
+      sourceId: obs.sourceId,
+      mediaType: obs.mediaType,
+    })) ?? [];
+
+  // If the model did not label photo provenance, derive it from the uploaded photos
+  if (photoObservations.length === 0 && photos.length > 0) {
+    for (const photo of photos) {
+      photoObservations.push({
+        sourceId: photo.sourceId,
+        mediaType: photo.mediaType as "image/jpeg" | "image/png" | "image/webp",
+      });
+    }
+  }
+
   const recipeId = crypto.randomUUID();
+  const photoSourceIds = photos.map((p) => p.sourceId);
+  const allSourceIds = [input.sourceId, ...photoSourceIds];
+  const dedupedSourceRefs = [...new Set(allSourceIds)].map((sourceId) => ({ sourceId }));
+
   const recipe = normalizedRecipeSchema.parse({
     id: recipeId,
     ...output,
-    sourceRefs: [{ sourceId: input.sourceId }],
+    photoObservations,
+    sourceRefs: dedupedSourceRefs,
     transformationHistory: [],
   });
   const now = new Date().toISOString();
@@ -205,6 +286,7 @@ Rules:
 - Apply the instruction throughout ingredients, quantities, timing, and steps where necessary.
 - Preserve the dish identity unless the cook explicitly asks otherwise.
 - Preserve or strengthen food-safety guidance.
+- Preserve photoObservations and provenance.
 - Do not mention or modify other recipes.
 - Return a concise change summary.
 
@@ -219,6 +301,8 @@ ${JSON.stringify(editableRecipe)}`,
   const recipe = normalizedRecipeSchema.parse({
     id: stored.recipe.id,
     ...output.recipe,
+    photoObservations: stored.recipe.photoObservations,
+    provenance: stored.recipe.provenance,
     sourceRefs: stored.recipe.sourceRefs,
     transformationHistory: history,
   });
@@ -271,6 +355,8 @@ export async function handleRecipeApi(
     const recipe = normalizedRecipeSchema.parse({
       id: stored.recipe.id,
       ...editable,
+      photoObservations: stored.recipe.photoObservations,
+      provenance: stored.recipe.provenance,
       sourceRefs: stored.recipe.sourceRefs,
       transformationHistory: stored.recipe.transformationHistory,
     });

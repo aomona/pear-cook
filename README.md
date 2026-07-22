@@ -20,19 +20,26 @@ AI output remains a proposal. The cook reviews the extracted recipe and compiled
 
 ## What it does
 
+- Offers a read-only interactive sample before sign-in; protected data and providers remain inaccessible.
 - Signs users in with GitHub OAuth and PKCE.
 - Accepts dish requests, public recipe URLs, and pasted recipe text.
 - Captures available ingredients, dietary constraints, equipment limits, finish-time requirements, and notes derived from photos.
 - Uses Gemini to extract structured recipes with ingredients, quantities, instructions, duration, temperature, equipment, safety notes, and source provenance.
+- Stores imported photos in R2, validates detected media types, and shows photo-derived notes beside recipe provenance.
 - Keeps every extracted recipe reviewable and editable.
 - Supports natural-language recipe adjustments such as changing servings or removing an ingredient.
 - Compiles multiple recipes into one dependency-aware cooking timeline.
+- Enforces one-cook hands-on safety plus configured burner and oven capacities while scheduling backward from the shared finish.
 - Represents passive waiting separately from active work, allowing another dish to progress during rests or delays.
 - Requires an explicit review checkbox and approval action before starting execution.
 - Presents a focused **Do this now / Coming up / Full cooking order** interface.
+- Persists multiple cooking timers, notification preferences, and screen-wake controls across reloads.
+- Supports approval-gated partial replanning for substitutions, delays, equipment changes, and doneness facts without rewriting completed work.
+- Captures per-recipe post-cook difficulty and actual duration to personalize later timing estimates.
 - Provides optional Gemini Live voice guidance without making the voice connection the source of truth.
 - Preserves the durable cooking session when voice disconnects or the page reloads.
 - Supports Japanese and English, including loading, empty, error, approval, execution, voice, and accessibility states.
+- Localizes canonical ingredient units and allergen labels for Japanese and English.
 - Works on desktop and mobile.
 
 ## Product flow
@@ -232,16 +239,18 @@ After deployment, verify `/health`, confirm that `/auth/session` returns `401` w
 
 ## Project status
 
-The first end-to-end slice is complete:
+The guided-cooking slice is complete:
 
-- GitHub login
-- recipe creation and URL/text input
-- structured recipe review and editing
-- multi-recipe synchronized planning
-- explicit approval
-- durable cooking execution
-- optional Gemini Live guidance
-- Japanese and English interfaces
-- production Cloudflare deployment
+- fail-closed GitHub login and an unauthenticated read-only sample;
+- URL, text, and photo recipe sources with editable structured extraction;
+- provenance, confidence, localized units, and allergen review;
+- capacity-aware, synchronized multi-recipe planning;
+- explicit human approval before durable execution;
+- persistent timers, notifications, wake lock, undo, focus, and high-contrast cooking controls;
+- approval-gated partial replanning that preserves completed work;
+- post-cook feedback and personalized duration estimates;
+- optional Gemini Live guidance with reconnect handling;
+- Japanese and English responsive interfaces; and
+- Cloudflare D1, R2, Workflow, Durable Object, and Worker integration.
 
-Future work includes partial replanning for ingredient or equipment changes, stronger burner-conflict detection, collaborative cooking sessions, nutrition and allergen summaries, and additional languages.
+Potential extensions include collaborative cooking sessions, nutrition summaries, and additional languages.

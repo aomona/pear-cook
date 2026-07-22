@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 export type Route =
+  | { page: "sample" }
   | { page: "plans" }
   | { page: "input"; planId: string }
   | { page: "plan"; planId: string }
@@ -8,6 +9,7 @@ export type Route =
 
 function readRoute(): Route {
   const parts = window.location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
+  if (parts[0] === "sample") return { page: "sample" };
   if (parts[0] === "plans" && parts[1] && parts[2] === "input") {
     return { page: "input", planId: decodeURIComponent(parts[1]) };
   }
@@ -19,6 +21,7 @@ function readRoute(): Route {
   }
   return { page: "plans" };
 }
+
 
 export function useRoute(): Route {
   const [route, setRoute] = useState(readRoute);
@@ -32,6 +35,7 @@ export function useRoute(): Route {
 
 export const links = {
   plans: () => "#/plans",
+  sample: () => "#/sample",
   input: (planId: string) => `#/plans/${encodeURIComponent(planId)}/input`,
   plan: (planId: string) => `#/plans/${encodeURIComponent(planId)}/review`,
   execute: (sessionId: string) => `#/sessions/${encodeURIComponent(sessionId)}`,

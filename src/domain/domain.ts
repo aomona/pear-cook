@@ -1,10 +1,32 @@
-import { defineAiDomain, sourceReferenceSchema } from "@pear-agent/core";
+import {
+  defineAiDomain,
+  resourceCapacitySchema,
+  sourceReferenceSchema,
+} from "@pear-agent/core";
 import { z } from "zod";
+
+export const COOKING_DOMAIN_VERSION = 2;
 
 export const recipeIngredientSchema = z.object({
   name: z.string().trim().min(1),
   quantity: z.string().trim().min(1),
   notes: z.string().trim().nullable().default(null),
+  amount: z.number().positive().optional(),
+  unit: z.string().trim().min(1).optional(),
+  canonicalUnit: z.string().trim().min(1).optional(),
+  allergens: z.array(z.string().trim().min(1)).default([]),
+});
+
+export const recipePhotoObservationSchema = z.object({
+  sourceId: z.string().min(1),
+  mediaType: z.enum(["image/jpeg", "image/png", "image/webp"]),
+  description: z.string().trim().min(1).optional(),
+});
+
+export const recipeProvenanceSchema = z.object({
+  confidence: z.number().min(0).max(1).default(0.8),
+  extractedBy: z.enum(["ai", "user", "import"]).default("ai"),
+  verifiedAt: z.string().datetime().optional(),
 });
 
 export const recipeInstructionSchema = z.object({
@@ -13,6 +35,15 @@ export const recipeInstructionSchema = z.object({
   durationSeconds: z.number().int().positive(),
   temperature: z.string().trim().nullable().default(null),
   equipment: z.array(z.string().trim().min(1)).default([]),
+  handsOn: z.boolean().optional(),
+  resourceRequirements: z
+    .array(
+      z.object({
+        resourceId: z.string().trim().min(1),
+        quantity: z.number().positive(),
+      }),
+    )
+    .default([]),
 });
 
 export const normalizedRecipeSchema = z.object({
@@ -32,6 +63,8 @@ export const normalizedRecipeSchema = z.object({
       }),
     )
     .default([]),
+  photoObservations: z.array(recipePhotoObservationSchema).default([]),
+  provenance: recipeProvenanceSchema.optional(),
 });
 
 export type NormalizedRecipe = z.output<typeof normalizedRecipeSchema>;
@@ -40,10 +73,17 @@ export const cookingCompileInputSchema = z.object({
   recipes: z.array(normalizedRecipeSchema).min(1).max(12),
   mealTitle: z.string().trim().min(1).max(160),
   finishTogether: z.literal(true),
-  availableIngredients: z.array(z.string().trim().min(1).max(120)).max(50).default([]),
-  dietaryConstraints: z.array(z.string().trim().min(1).max(200)).max(20).default([]),
+  availableIngredients: z
+    .array(z.string().trim().min(1).max(120))
+    .max(50)
+    .default([]),
+  dietaryConstraints: z
+    .array(z.string().trim().min(1).max(200))
+    .max(20)
+    .default([]),
   photoNotes: z.string().trim().max(2_000).nullable().default(null),
   planningNotes: z.string().trim().max(2_000).nullable().default(null),
+  kitchenCapacities: z.array(resourceCapacitySchema).default([]),
 });
 
 export const cookingNormalizedInputSchema = cookingCompileInputSchema;
@@ -57,11 +97,15 @@ export const cookingStepDataSchema = z.object({
   ingredients: z.array(z.string()).default([]),
   equipment: z.array(z.string()).default([]),
   temperature: z.string().nullable().default(null),
+  handsOn: z.boolean().default(true),
+  estimateFactor: z.number().min(0.5).max(2.0).default(1.0),
+  localizedQuantity: z.string().trim().optional(),
+  allergens: z.array(z.string().trim().min(1)).default([]),
 });
 
 export const cookingDomain = defineAiDomain({
   id: "guided-cooking",
-  version: 2,
+  version: COOKING_DOMAIN_VERSION,
   schemas: {
     compileInput: cookingCompileInputSchema,
     normalizedInput: cookingNormalizedInputSchema,
@@ -70,6 +114,8 @@ export const cookingDomain = defineAiDomain({
       substitutions: z.record(z.string(), z.string()).default({}),
       donenessNotes: z.array(z.string()).default([]),
       sharedFinishAt: z.string().nullable().default(null),
+      delaySeconds: z.number().int().nonnegative().default(0),
+      activeEquipment: z.array(z.string()).default([]),
     }),
     events: z.discriminatedUnion("type", [
       z.object({
@@ -83,11 +129,45 @@ export const cookingDomain = defineAiDomain({
         recipeId: z.string().min(1),
         note: z.string().min(1),
       }),
+      z.object({
+        type: z.literal("delay_reported"),
+        recipeId: z.string().min(1),
+        seconds: z.number().int().nonnegative(),
+        reason: z.string().trim().min(1).optional(),
+      }),
+      z.object({
+        type: z.literal("equipment_changed"),
+        recipeId: z.string().min(1),
+        equipmentId: z.string().min(1),
+        action: z.enum(["added", "removed", "failed"]),
+      }),
+      z.object({
+        type: z.literal("substitution_confirmed"),
+        recipeId: z.string().min(1),
+        original: z.string().min(1),
+        replacement: z.string().min(1),
+        approvedBy: z.enum(["cook", "ai"]).default("cook"),
+      }),
+      z.object({
+        type: z.literal("doneness_feedback"),
+        recipeId: z.string().min(1),
+        rating: z.number().int().min(1).max(5),
+        difficulty: z.enum(["easy", "moderate", "hard"]).optional(),
+        estimatedSeconds: z.number().int().positive().optional(),
+        actualSeconds: z.number().int().positive().optional(),
+        notes: z.string().trim().max(2_000).optional(),
+      }),
+      z.object({
+        type: z.literal("cook_feedback"),
+        recipeId: z.string().min(1),
+        rating: z.number().int().min(1).max(5),
+        notes: z.string().trim().max(2_000).optional(),
+      }),
     ]),
   },
   interpretation: {
     instructions:
-      "The compile input already contains independently normalized and user-refined recipes. Preserve every recipe, its sourceRefs, ingredients, instructions, transformation history, and safety notes exactly unless planning requires a non-semantic formatting change. Never undo a per-recipe user transformation.",
+      "The compile input already contains independently normalized and user-refined recipes. Preserve every recipe, its sourceRefs, ingredients, instructions, transformation history, safety notes, photo observations, provenance, and structured quantities exactly unless planning requires a non-semantic formatting change. Never undo a per-recipe user transformation.",
   },
   planning: {
     instructions:
@@ -96,29 +176,97 @@ export const cookingDomain = defineAiDomain({
       "Make all dishes finish together without avoidable holding time",
       "Keep one cook's concurrent workload safe and realistic",
       "Preserve each refined recipe and its provenance",
-      "Expose timing, temperature, equipment, and recipe ownership on every step",
+      "Expose timing, temperature, equipment, hands-on status, and recipe ownership on every step",
     ],
     validatePlan(plan, normalizedInput) {
       const recipeIds = new Set(normalizedInput.recipes.map((recipe) => recipe.id));
       const coveredRecipeIds = new Set<string>();
       const issues = plan.steps.flatMap((step) => {
         const stepIssues: string[] = [];
-        if (!step.sourceRefs?.length) stepIssues.push(`Step ${step.id} has no source provenance`);
-        if (!step.instructions?.trim()) stepIssues.push(`Step ${step.id} has no instructions`);
+        if (!step.sourceRefs?.length) {
+          stepIssues.push(`Step ${step.id} has no source provenance`);
+        }
+        if (!step.instructions?.trim()) {
+          stepIssues.push(`Step ${step.id} has no instructions`);
+        }
         const parsed = cookingStepDataSchema.safeParse(step.domainData);
         if (!parsed.success) {
           stepIssues.push(`Step ${step.id} has invalid cooking timing data`);
-        } else if (parsed.data.recipeId !== "shared") {
-          coveredRecipeIds.add(parsed.data.recipeId);
-          if (!recipeIds.has(parsed.data.recipeId)) {
-            stepIssues.push(`Step ${step.id} references an unknown recipe`);
+        } else {
+          if (parsed.data.startOffsetSeconds < 0) {
+            stepIssues.push(`Step ${step.id} has negative startOffsetSeconds`);
+          }
+          if (parsed.data.recipeId !== "shared") {
+            coveredRecipeIds.add(parsed.data.recipeId);
+            if (!recipeIds.has(parsed.data.recipeId)) {
+              stepIssues.push(`Step ${step.id} references an unknown recipe`);
+            }
+          }
+        }
+        if (step.timeline && step.timeline.endOffsetSeconds < step.timeline.startOffsetSeconds) {
+          stepIssues.push(`Step ${step.id} has negative timeline window`);
+        }
+        const rr = step.resourceRequirements ?? [];
+        for (const req of rr) {
+          if (req.quantity <= 0) {
+            stepIssues.push(`Step ${step.id} has invalid resource requirement quantity`);
           }
         }
         return stepIssues;
       });
       for (const recipeId of recipeIds) {
-        if (!coveredRecipeIds.has(recipeId)) issues.push(`Recipe ${recipeId} has no scheduled steps`);
+        if (!coveredRecipeIds.has(recipeId)) {
+          issues.push(`Recipe ${recipeId} has no scheduled steps`);
+        }
       }
+
+      // Capacity conflict detection
+      const capacityMap = new Map<string, number>();
+      for (const c of normalizedInput.kitchenCapacities) capacityMap.set(c.id, c.capacity);
+      capacityMap.set("cook", 1);
+      type CapEvent = { time: number; resourceId: string; delta: number };
+      const capEvents: CapEvent[] = [];
+      for (const step of plan.steps) {
+        if (!step.timeline) continue;
+        const start = step.timeline.startOffsetSeconds;
+        const end = step.timeline.endOffsetSeconds;
+        const reqs = step.resourceRequirements ?? [];
+        for (const req of reqs) {
+          capEvents.push({ time: start, resourceId: req.resourceId, delta: req.quantity });
+          capEvents.push({ time: end, resourceId: req.resourceId, delta: -req.quantity });
+        }
+      }
+      capEvents.sort((a, b) => a.time - b.time || a.delta - b.delta);
+      const usage = new Map<string, number>();
+      for (const ev of capEvents) {
+        const current = (usage.get(ev.resourceId) ?? 0) + ev.delta;
+        usage.set(ev.resourceId, current);
+        const cap = capacityMap.get(ev.resourceId) ?? Infinity;
+        if (current > cap) {
+          issues.push(`Capacity exceeded for ${ev.resourceId} at ${ev.time}s`);
+        }
+      }
+
+      // Finish alignment check
+      const serveStep = plan.steps.find((s) => s.id === "serve-all-dishes");
+      if (serveStep) {
+        const finishTimes: number[] = [];
+        for (const afterId of serveStep.after) {
+          const dep = plan.steps.find((s) => s.id === afterId);
+          if (dep?.timeline) {
+            finishTimes.push(dep.timeline.endOffsetSeconds);
+          }
+        }
+        if (finishTimes.length > 1) {
+          const maxFinish = Math.max(...finishTimes);
+          for (const ft of finishTimes) {
+            if (ft < maxFinish) {
+              issues.push(`Misaligned recipe finish at ${ft}s vs shared ${maxFinish}s`);
+            }
+          }
+        }
+      }
+
       return {
         valid: plan.steps.length > 0 && issues.length === 0,
         issues: plan.steps.length > 0 ? issues : ["Combined cooking plan must contain steps", ...issues],
@@ -127,7 +275,7 @@ export const cookingDomain = defineAiDomain({
   },
   replanning: {
     instructions:
-      "Change only future steps affected by a substitution, delay, equipment conflict, or doneness fact. Recalculate the affected recipes against the shared finish line. Never rewrite completed or skipped steps, and require confirmation before changing an active step.",
+      "Change only future steps affected by a substitution, delay, equipment conflict, or doneness fact. Recalculate the affected recipes against the shared finish line. Never rewrite completed or skipped steps, and require confirmation before changing an active step. Return only the requested PlanPatch schema. Every operation must be exactly { type: 'add_step', step }, { type: 'update_step', stepId, step }, or { type: 'remove_step', stepId }. For update_step, copy the complete existing step and change only the necessary fields. Never emit op, update, or value fields, and never use a partial step.",
     defaultMode: "confirm",
     reconcileWorldState(_plan, worldState) {
       return worldState;
@@ -135,7 +283,7 @@ export const cookingDomain = defineAiDomain({
   },
   realtime: {
     instructions:
-      "Speak in concise, natural Japanese while the cook works hands-free. Start by reading the authoritative runtime snapshot and name the dish before every instruction. Guide all active recipes against one shared finish line, surface only simultaneous tasks that are safe for one cook, and repeat temperatures, equipment, and timers. Ask for explicit confirmation before starting or completing a step, and require the cook to confirm doneness rather than inferring it from elapsed time. If the cook reports an ingredient substitution, delay, safety concern, or changed equipment, record the Domain event before proposing a confirmed replan. Never treat voice disconnect as stopping execution.",
+      "Speak in concise, natural Japanese while the cook works hands-free. Start by reading the authoritative runtime snapshot and name the dish before every instruction. Guide all active recipes against one shared finish line, surface only simultaneous tasks that are safe for one cook, and repeat temperatures, equipment, timers, and hands-on status. Ask for explicit confirmation before starting or completing a step, and require the cook to confirm doneness rather than inferring it from elapsed time. If the cook reports an ingredient substitution, delay, safety concern, or changed equipment, record the Domain event before proposing a confirmed replan. Never treat voice disconnect as stopping execution.",
     defaultLocale: "ja-JP",
   },
   capabilities: [],
