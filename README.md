@@ -25,7 +25,7 @@ AI output remains a proposal. The cook reviews the extracted recipe and compiled
 - Accepts dish requests, public recipe URLs, and pasted recipe text.
 - Captures available ingredients, dietary constraints, equipment limits, finish-time requirements, and notes derived from photos.
 - Uses Gemini to extract structured recipes with ingredients, quantities, instructions, duration, temperature, equipment, safety notes, and source provenance.
-- Generates optional finished-dish previews with Google AI, stores the generated image in R2, and labels it as an AI preview that may differ from the actual result.
+- Generates optional finished-dish previews with Cloudflare Workers AI using FLUX.2 [klein] 4B, stores the generated image in R2, and labels it as an AI preview that may differ from the actual result.
 - Keeps every extracted recipe reviewable and editable.
 - Supports natural-language recipe adjustments such as changing servings or removing an ingredient.
 - Compiles multiple recipes into one dependency-aware cooking timeline.
@@ -106,7 +106,7 @@ flowchart TD
 | Area | Technology |
 | --- | --- |
 | Agent runtime | PEAR Agent Core, AI, Cloudflare, and React packages |
-| AI | Gemini structured generation, Gemini Live, Google AI SDK, AI SDK |
+| AI | Gemini structured generation and Live, Cloudflare Workers AI with FLUX.2 [klein] 4B, AI SDK |
 | Frontend | React 19, TypeScript, Vite, shadcn/ui patterns, Radix UI, Lucide |
 | Data fetching | TanStack Query and PEAR React hooks |
 | API | Cloudflare Workers and Hono |

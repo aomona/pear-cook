@@ -1,13 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const googleGenerateContent = vi.hoisted(() => vi.fn());
-
-vi.mock("@google/genai", () => ({
-  GoogleGenAI: class {
-    models = { generateContent: googleGenerateContent };
-  },
-  Modality: { IMAGE: "IMAGE" },
-}));
+const workersAiRun = vi.fn();
 
 import type { PearRequestContext } from "@pear-agent/cloudflare";
 
@@ -21,9 +14,9 @@ function pngBase64(): string {
 }
 
 describe("generated recipe image route", () => {
-  beforeEach(() => googleGenerateContent.mockReset());
+  beforeEach(() => workersAiRun.mockReset());
 
-  it("persists validated Google AI image bytes and returns the updated recipe", async () => {
+  it("persists validated Workers AI image bytes and returns the updated recipe", async () => {
     const recipe = normalizedRecipeSchema.parse({
       id: "recipe-1",
       title: "Tomato pasta",
@@ -38,15 +31,7 @@ describe("generated recipe image route", () => {
       ],
       sourceRefs: [{ sourceId: "source-1" }],
     });
-    googleGenerateContent.mockResolvedValue({
-      candidates: [
-        {
-          content: {
-            parts: [{ inlineData: { data: pngBase64(), mimeType: "image/png" } }],
-          },
-        },
-      ],
-    });
+    workersAiRun.mockResolvedValue({ image: pngBase64() });
 
     const batched: Array<Array<{ sql: string; args: unknown[] }>> = [];
     const puts: Array<{ key: string; value: ArrayBuffer; options: unknown }> = [];
@@ -95,6 +80,7 @@ describe("generated recipe image route", () => {
       DB: db,
       RAW_INPUTS: rawInputs,
       GEMINI_API_KEY: "test-key",
+      AI: { run: workersAiRun },
     } as unknown as RecipeEnv;
     const context = {
       actorId: "actor-1",
@@ -115,15 +101,20 @@ describe("generated recipe image route", () => {
       expect.objectContaining({
         kind: "generated",
         mediaType: "image/png",
-        model: "gemini-3.1-flash-image-preview",
+        model: "@cf/black-forest-labs/flux-2-klein-4b",
       }),
     ]);
-    expect(googleGenerateContent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        model: "gemini-3.1-flash-image-preview",
-        config: expect.objectContaining({ responseModalities: ["IMAGE"] }),
-      }),
-    );
+    const [receivedModel, receivedInput] = workersAiRun.mock.calls[0] as unknown as [
+      string,
+      { multipart: { body: ReadableStream; contentType: string } },
+    ];
+    const receivedForm = await new Response(receivedInput.multipart.body, {
+      headers: { "content-type": receivedInput.multipart.contentType },
+    }).formData();
+    expect(receivedModel).toBe("@cf/black-forest-labs/flux-2-klein-4b");
+    expect(receivedForm?.get("prompt")).toContain("Dish: Tomato pasta");
+    expect(receivedForm?.get("width")).toBe("1024");
+    expect(receivedForm?.get("height")).toBe("768");
     expect(puts).toHaveLength(1);
     expect(puts[0]?.key).toContain("generated-images/plan-1/recipe-1/");
     expect(new Uint8Array(puts[0]?.value ?? new ArrayBuffer(0)).slice(0, 4)).toEqual(

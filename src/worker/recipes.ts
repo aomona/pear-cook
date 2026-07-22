@@ -1,4 +1,3 @@
-import { GoogleGenAI, Modality } from "@google/genai";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import type { PearEnv, PearRequestContext } from "@pear-agent/cloudflare";
 import { generateText, Output } from "ai";
@@ -19,8 +18,8 @@ import {
   type AllowedMediaType,
 } from "./photos.js";
 
-export type RecipeEnv = PearEnv & { GEMINI_API_KEY?: string };
-const RECIPE_IMAGE_MODEL = "gemini-3.1-flash-image-preview";
+export type RecipeEnv = PearEnv & { GEMINI_API_KEY?: string; AI: Ai };
+const RECIPE_IMAGE_MODEL = "@cf/black-forest-labs/flux-2-klein-4b";
 const COOKING_MODEL = "gemini-3.5-flash-lite";
 
 const recipeContentSchema = z.object({
@@ -313,35 +312,32 @@ async function generateRecipeImage(
 ): Promise<Response> {
   const stored = await getOwnedRecipe(env, planId, recipeId, context.actorId);
   if (!stored) return jsonError("Recipe not found", 404);
-  if (!env.GEMINI_API_KEY) return jsonError("GEMINI_API_KEY is not configured", 503);
 
   let generated: { bytes: Uint8Array; mediaType: AllowedMediaType };
   try {
-    const ai = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY });
-    const response = await ai.models.generateContent({
-      model: RECIPE_IMAGE_MODEL,
-      contents: buildRecipeImagePrompt(stored.recipe),
-      config: {
-        abortSignal: request.signal,
-        responseModalities: [Modality.IMAGE],
-        imageConfig: { aspectRatio: "4:3", imageSize: "1K" },
-      },
+    request.signal.throwIfAborted();
+    const form = new FormData();
+    form.append("prompt", buildRecipeImagePrompt(stored.recipe));
+    form.append("width", "1024");
+    form.append("height", "768");
+    const multipartResponse = new Response(form);
+    const body = multipartResponse.body;
+    const contentType = multipartResponse.headers.get("content-type");
+    if (!body || !contentType) throw new Error("Could not serialize image generation request");
+
+    const response = await env.AI.run(RECIPE_IMAGE_MODEL, {
+      multipart: { body, contentType },
     });
-    const inlineData = response.candidates
-      ?.flatMap((candidate) => candidate.content?.parts ?? [])
-      .find((part) => part.inlineData?.data)?.inlineData;
-    if (!inlineData?.data) return jsonError("Google AI did not return an image", 422);
-    generated = decodeGeneratedImage(inlineData.data, inlineData.mimeType);
+    request.signal.throwIfAborted();
+    if (!response.image) return jsonError("Workers AI did not return an image", 422);
+    generated = decodeGeneratedImage(response.image, undefined);
   } catch (error) {
     if (request.signal.aborted) return jsonError("Image generation was cancelled", 499);
     const providerMessage = error instanceof Error ? error.message : "";
     if (providerMessage.includes("429") || providerMessage.toLowerCase().includes("quota")) {
-      return jsonError(
-        "Google AI image generation quota is unavailable. Check the API project's billing and quota.",
-        503,
-      );
+      return jsonError("Cloudflare Workers AI image generation quota is unavailable.", 503);
     }
-    return jsonError("Google AI could not generate this image. Try again.", 502);
+    return jsonError("Cloudflare Workers AI could not generate this image. Try again.", 502);
   }
 
   const sourceId = crypto.randomUUID();
